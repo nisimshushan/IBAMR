@@ -42,6 +42,8 @@
 #include <ibamr/INSStaggeredHierarchyIntegrator.h>
 
 #include <ibtk/AppInitializer.h>
+#include <ibtk/IBTKInit.h>
+#include <ibtk/IBTK_MPI.h>
 #include <ibtk/libmesh_utilities.h>
 #include <ibtk/muParserCartGridFunction.h>
 #include <ibtk/muParserRobinBcCoefs.h>
@@ -145,11 +147,9 @@ using namespace ModelData;
 int
 main(int argc, char** argv)
 {
-    // Initialize libMesh, PETSc, MPI, and SAMRAI.
-    LibMeshInit init(argc, argv);
-    SAMRAI_MPI::setCommunicator(PETSC_COMM_WORLD);
-    SAMRAI_MPI::setCallAbortInSerialInsteadOfExit();
-    SAMRAIManager::startup();
+    // Initialize IBAMR and libraries. Deinitialization is handled by this object as well.
+    IBTKInit ibtk_init(argc, argv, MPI_COMM_WORLD);
+    const LibMeshInit& init = ibtk_init.getLibMeshInit();
 
     PetscOptionsSetValue(nullptr, "-ksp_rtol", "1e-16");
     PetscOptionsSetValue(nullptr, "-ksp_rtol", "1e-16");
@@ -569,8 +569,8 @@ main(int argc, char** argv)
                     J_integral += abs(FF.det()) * JxW[qp];
                 }
             }
-            J_integral = SAMRAI_MPI::sumReduction(J_integral);
-            if (SAMRAI_MPI::getRank() == 0)
+            J_integral = IBTK_MPI::sumReduction(J_integral);
+            if (IBTK_MPI::getRank() == 0)
             {
                 plog << std::setprecision(12) << std::fixed << loop_time << " " << J_integral << std::endl;
             }
@@ -591,6 +591,4 @@ main(int argc, char** argv)
         for (unsigned int d = 0; d < NDIM; ++d) delete u_bc_coefs[d];
 
     } // cleanup dynamically allocated objects prior to shutdown
-
-    SAMRAIManager::shutdown();
 } // main
