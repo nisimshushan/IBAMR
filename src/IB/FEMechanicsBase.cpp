@@ -1112,6 +1112,15 @@ FEMechanicsBase::commonConstructor(const std::string& object_name,
     if (from_restart) getFromRestart();
     if (input_db) getFromInput(input_db, from_restart);
 
+    // Reset the default quadrature rules when using lumped mass matrices.
+    if (!d_use_consistent_mass_matrix)
+    {
+        std::fill(d_default_quad_type_stress.begin(), d_default_quad_type_stress.end(), QNODAL);
+        std::fill(d_default_quad_type_force.begin(), d_default_quad_type_force.end(), QNODAL);
+        std::fill(d_default_quad_order_stress.begin(), d_default_quad_order_stress.begin(), INVALID_ORDER);
+        std::fill(d_default_quad_order_force.begin(), d_default_quad_order_force.begin(), INVALID_ORDER);
+    }
+
     // Report configuration for each part.
     for (unsigned int part = 0; part < d_meshes.size(); ++part)
     {

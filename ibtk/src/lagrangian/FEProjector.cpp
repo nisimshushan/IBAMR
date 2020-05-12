@@ -243,7 +243,7 @@ FEProjector::buildDiagonalL2MassMatrix(const std::string& system_name)
         FEData::SystemDofMapCache& dof_map_cache = *d_fe_data->getDofMapCache(system_name);
         dof_map.compute_sparsity(mesh);
         FEType fe_type = dof_map.variable_type(0);
-        std::unique_ptr<QBase> qrule = fe_type.default_quadrature_rule(dim);
+        std::unique_ptr<QBase> qrule = QBase::build("QNODAL", dim);
         std::unique_ptr<FEBase> fe(FEBase::build(dim, fe_type));
         fe->attach_quadrature_rule(qrule.get());
         const std::vector<double>& JxW = fe->get_JxW();
@@ -254,7 +254,6 @@ FEProjector::buildDiagonalL2MassMatrix(const std::string& system_name)
             static_cast<PetscVector<double>*>(system.solution->zero_clone().release()));
 
         // Loop over the mesh to construct the system matrix.
-        DenseMatrix<double> M_e;
         DenseVector<double> M_e_vec;
         std::vector<libMesh::dof_id_type> dof_id_scratch;
         const MeshBase::const_element_iterator el_begin = mesh.active_local_elements_begin();
@@ -267,27 +266,15 @@ FEProjector::buildDiagonalL2MassMatrix(const std::string& system_name)
             for (unsigned int var_num = 0; var_num < dof_map.n_variables(); ++var_num)
             {
                 const auto dof_indices_sz = static_cast<unsigned int>(dof_indices[var_num].size());
-                M_e.resize(dof_indices_sz, dof_indices_sz);
                 M_e_vec.resize(dof_indices_sz);
                 const size_t n_basis = dof_indices[var_num].size();
                 const unsigned int n_qp = qrule->n_points();
                 for (unsigned int i = 0; i < n_basis; ++i)
                 {
-                    for (unsigned int j = 0; j < n_basis; ++j)
+                    for (unsigned int qp = 0; qp < n_qp; ++qp)
                     {
-                        for (unsigned int qp = 0; qp < n_qp; ++qp)
-                        {
-                            M_e(i, j) += (phi[i][qp] * phi[j][qp]) * JxW[qp];
-                        }
+                        M_e_vec(i) += (phi[i][qp] * phi[i][qp]) * JxW[qp];
                     }
-                }
-
-                const double vol = elem->volume();
-                double tr_M = 0.0;
-                for (unsigned int i = 0; i < n_basis; ++i) tr_M += M_e(i, i);
-                for (unsigned int i = 0; i < n_basis; ++i)
-                {
-                    M_e_vec(i) = vol * M_e(i, i) / tr_M;
                 }
 
                 dof_id_scratch = dof_indices[var_num];
