@@ -16,6 +16,7 @@
 #include "ibamr/AdvDiffConvectiveOperatorManager.h"
 #include "ibamr/AdvDiffHierarchyIntegrator.h"
 #include "ibamr/AdvDiffSemiImplicitHierarchyIntegrator.h"
+#include "ibamr/BrinkmanPenalizationAdvDiff.h"
 #include "ibamr/ConvectiveOperator.h"
 #include "ibamr/ibamr_enums.h"
 #include "ibamr/ibamr_utilities.h"
@@ -398,6 +399,7 @@ AdvDiffSemiImplicitHierarchyIntegrator::initializeHierarchyIntegrator(Pointer<Pa
 
     // Register additional variables required for present time stepping algorithm.
     const IntVector<NDIM> cell_ghosts = CELLG;
+    const IntVector<NDIM> no_ghosts = 0;
     for (const auto& Q_var : d_Q_var)
     {
         Pointer<CellDataFactory<NDIM, double> > Q_factory = Q_var->getPatchDataFactory();
@@ -421,6 +423,20 @@ AdvDiffSemiImplicitHierarchyIntegrator::initializeHierarchyIntegrator(Pointer<Pa
                          cell_ghosts,
                          "CONSERVATIVE_COARSEN",
                          "CONSERVATIVE_LINEAR_REFINE");
+
+        // Variables required for optional Brinkman penalization
+        Pointer<CellVariable<NDIM, double> > C_var = new CellVariable<NDIM, double>(Q_var->getName() + "::C", Q_depth);
+        Pointer<CellVariable<NDIM, double> > C_rhs_var =
+            new CellVariable<NDIM, double>(Q_var->getName() + "::C_RHS", Q_depth);
+        Pointer<CellVariable<NDIM, double> > B_var = new CellVariable<NDIM, double>(Q_var->getName() + "::B", Q_depth);
+        d_Q_C_map[Q_var] = C_var;
+        d_Q_C_rhs_map[Q_var] = C_rhs_var;
+        d_Q_B_map[Q_var] = B_var;
+        int C_current_idx, C_scratch_idx, C_rhs_scratch_idx, B_scratch_idx;
+        registerVariable(C_current_idx, C_var, no_ghosts, getCurrentContext());
+        registerVariable(C_scratch_idx, C_var, no_ghosts, getScratchContext());
+        registerVariable(C_rhs_scratch_idx, C_rhs_var, no_ghosts, getScratchContext());
+        registerVariable(B_scratch_idx, B_var, no_ghosts, getScratchContext());
     }
 
     // Perform hierarchy initialization operations common to all implementations
@@ -520,6 +536,8 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
         Pointer<CellVariable<NDIM, double> > Q_rhs_var = d_Q_Q_rhs_map[Q_var];
         Pointer<SideVariable<NDIM, double> > D_var = d_Q_diffusion_coef_variable[Q_var];
         Pointer<SideVariable<NDIM, double> > D_rhs_var = d_diffusion_coef_rhs_map[D_var];
+        Pointer<CellVariable<NDIM, double> > C_var = d_Q_C_map[Q_var];
+        Pointer<CellVariable<NDIM, double> > C_rhs_var = d_Q_C_rhs_map[Q_var];
         TimeSteppingType diffusion_time_stepping_type = d_Q_diffusion_time_stepping_type[Q_var];
         const double lambda = d_Q_damping_coef[Q_var];
         const std::vector<RobinBcCoefStrategy<NDIM>*>& Q_bc_coef = d_Q_bc_coef[Q_var];
@@ -532,6 +550,17 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
         const int D_scratch_idx = (D_var ? var_db->mapVariableAndContextToIndex(D_var, getScratchContext()) : -1);
         const int D_rhs_scratch_idx =
             (D_rhs_var ? var_db->mapVariableAndContextToIndex(D_rhs_var, getScratchContext()) : -1);
+
+        const bool apply_brinkman =
+            d_brinkman_penalization && d_brinkman_penalization->hasBrinkmanBoundaryCondition(Q_var);
+        int C_current_idx = -1, C_scratch_idx = -1;
+        int C_rhs_scratch_idx = -1;
+        if (apply_brinkman)
+        {
+            C_current_idx = var_db->mapVariableAndContextToIndex(C_var, getCurrentContext());
+            C_scratch_idx = var_db->mapVariableAndContextToIndex(C_var, getScratchContext());
+            C_rhs_scratch_idx = var_db->mapVariableAndContextToIndex(C_rhs_var, getScratchContext());
+        }
 
         // Setup the problem coefficients for the linear solve for Q(n+1).
         double K = 0.0;
@@ -555,8 +584,24 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
         }
         PoissonSpecifications solver_spec(d_object_name + "::solver_spec::" + Q_var->getName());
         PoissonSpecifications rhs_op_spec(d_object_name + "::rhs_op_spec::" + Q_var->getName());
-        solver_spec.setCConstant(1.0 / dt + K * lambda);
-        rhs_op_spec.setCConstant(1.0 / dt - (1.0 - K) * lambda);
+        if (apply_brinkman)
+        {
+            // set 1.0/dt + K*lambda + K*chi*(1-Hphi) in solver_spec
+            d_brinkman_penalization->computeBrinkmanOperator(C_current_idx, Q_var);
+            d_hier_cc_data_ops->scale(C_scratch_idx, K, C_current_idx);
+            d_hier_cc_data_ops->addScalar(C_scratch_idx, C_scratch_idx, 1.0 / dt + K * lambda);
+            solver_spec.setCPatchDataId(C_scratch_idx);
+
+            // set 1.0/dt - (1.0-K)*lambda - (1.0-K)*chi*(1-Hphi) in rhs_op_spec, which is applied to Q later
+            d_hier_cc_data_ops->scale(C_rhs_scratch_idx, -(1.0 - K), C_current_idx);
+            d_hier_cc_data_ops->addScalar(C_rhs_scratch_idx, C_rhs_scratch_idx, 1.0 / dt - (1.0 - K) * lambda);
+            rhs_op_spec.setCPatchDataId(C_rhs_scratch_idx);
+        }
+        else
+        {
+            solver_spec.setCConstant(1.0 / dt + K * lambda);
+            rhs_op_spec.setCConstant(1.0 / dt - (1.0 - K) * lambda);
+        }
         if (isDiffusionCoefficientVariable(Q_var))
         {
             // set -K*kappa in solver_spec
@@ -693,6 +738,7 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
         Pointer<CellVariable<NDIM, double> > Q_var = *cit;
         Pointer<CellVariable<NDIM, double> > F_var = d_Q_F_map[Q_var];
         Pointer<CellVariable<NDIM, double> > Q_rhs_var = d_Q_Q_rhs_map[Q_var];
+        Pointer<CellVariable<NDIM, double> > B_var = d_Q_B_map[Q_var];
 
         const int Q_scratch_idx = var_db->mapVariableAndContextToIndex(Q_var, getScratchContext());
         const int Q_new_idx = var_db->mapVariableAndContextToIndex(Q_var, getNewContext());
@@ -700,6 +746,14 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
             d_F_fcn[F_var] ? var_db->mapVariableAndContextToIndex(F_var, getScratchContext()) : -1;
         const int F_new_idx = d_F_fcn[F_var] ? var_db->mapVariableAndContextToIndex(F_var, getNewContext()) : -1;
         const int Q_rhs_scratch_idx = var_db->mapVariableAndContextToIndex(Q_rhs_var, getScratchContext());
+
+        const bool apply_brinkman =
+            d_brinkman_penalization && d_brinkman_penalization->hasBrinkmanBoundaryCondition(Q_var);
+        int B_scratch_idx = -1;
+        if (apply_brinkman)
+        {
+            B_scratch_idx = var_db->mapVariableAndContextToIndex(B_var, getScratchContext());
+        }
 
         // Update the advection velocity.
         if (cycle_num > 0)
@@ -804,6 +858,13 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
             d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, 1.0, F_scratch_idx, Q_rhs_scratch_idx);
         }
 
+        // Account for optional Brinkman RHS forcing terms chi*(1-Hphi)*Q_bc.
+        if (apply_brinkman)
+        {
+            d_brinkman_penalization->computeBrinkmanForcing(B_scratch_idx, Q_var);
+            d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, 1.0, B_scratch_idx, Q_rhs_scratch_idx);
+        }
+
         if (isDiffusionCoefficientVariable(Q_var) || (d_Q_diffusion_coef[Q_var] != 0.0))
         {
             // Solve for Q(n+1).
@@ -846,6 +907,11 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
         {
             d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -1.0, F_scratch_idx, Q_rhs_scratch_idx);
             d_hier_cc_data_ops->copyData(F_new_idx, F_scratch_idx);
+        }
+
+        if (apply_brinkman)
+        {
+            d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -1.0, B_scratch_idx, Q_rhs_scratch_idx);
         }
     }
 

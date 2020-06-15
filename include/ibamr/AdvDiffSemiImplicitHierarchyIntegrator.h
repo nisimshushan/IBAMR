@@ -341,6 +341,13 @@ protected:
         d_Q_convective_op;
     std::map<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> >, bool> d_Q_convective_op_needs_init;
 
+    /*!
+     * Additional variables required for optional Brinkman penalization
+     */
+    std::map<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> >,
+             SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > >
+        d_Q_C_map, d_Q_C_rhs_map, d_Q_B_map;
+
 private:
     /*!
      * \brief Default constructor.
