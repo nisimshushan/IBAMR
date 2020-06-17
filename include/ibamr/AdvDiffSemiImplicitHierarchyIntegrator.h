@@ -346,7 +346,10 @@ protected:
      */
     std::map<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> >,
              SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > >
-        d_Q_C_map, d_Q_C_rhs_map, d_Q_B_map;
+        d_Q_Cb_map, d_Q_Cb_rhs_map, d_Q_Fb_map;
+    std::map<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> >,
+             SAMRAI::tbox::Pointer<SAMRAI::pdat::SideVariable<NDIM, double> > >
+        d_Q_Db_map, d_Q_Db_rhs_map;
 
 private:
     /*!

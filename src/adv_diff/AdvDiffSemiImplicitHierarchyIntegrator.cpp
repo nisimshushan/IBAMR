@@ -93,6 +93,7 @@ namespace IBAMR
 
 // Number of ghosts cells used for each variable quantity.
 static const int CELLG = 1;
+static const int SIDEG = 1;
 
 /////////////////////////////// PUBLIC ///////////////////////////////////////
 
@@ -399,6 +400,7 @@ AdvDiffSemiImplicitHierarchyIntegrator::initializeHierarchyIntegrator(Pointer<Pa
 
     // Register additional variables required for present time stepping algorithm.
     const IntVector<NDIM> cell_ghosts = CELLG;
+    const IntVector<NDIM> side_ghosts = SIDEG;
     const IntVector<NDIM> no_ghosts = 0;
     for (const auto& Q_var : d_Q_var)
     {
@@ -425,18 +427,30 @@ AdvDiffSemiImplicitHierarchyIntegrator::initializeHierarchyIntegrator(Pointer<Pa
                          "CONSERVATIVE_LINEAR_REFINE");
 
         // Variables required for optional Brinkman penalization
-        Pointer<CellVariable<NDIM, double> > C_var = new CellVariable<NDIM, double>(Q_var->getName() + "::C", Q_depth);
-        Pointer<CellVariable<NDIM, double> > C_rhs_var =
-            new CellVariable<NDIM, double>(Q_var->getName() + "::C_RHS", Q_depth);
-        Pointer<CellVariable<NDIM, double> > B_var = new CellVariable<NDIM, double>(Q_var->getName() + "::B", Q_depth);
-        d_Q_C_map[Q_var] = C_var;
-        d_Q_C_rhs_map[Q_var] = C_rhs_var;
-        d_Q_B_map[Q_var] = B_var;
-        int C_current_idx, C_scratch_idx, C_rhs_scratch_idx, B_scratch_idx;
-        registerVariable(C_current_idx, C_var, no_ghosts, getCurrentContext());
-        registerVariable(C_scratch_idx, C_var, no_ghosts, getScratchContext());
-        registerVariable(C_rhs_scratch_idx, C_rhs_var, no_ghosts, getScratchContext());
-        registerVariable(B_scratch_idx, B_var, no_ghosts, getScratchContext());
+        Pointer<CellVariable<NDIM, double> > Cb_var =
+            new CellVariable<NDIM, double>(Q_var->getName() + "::Cb", Q_depth);
+        Pointer<CellVariable<NDIM, double> > Cb_rhs_var =
+            new CellVariable<NDIM, double>(Q_var->getName() + "::Cb_RHS", Q_depth);
+        Pointer<SideVariable<NDIM, double> > Db_var =
+            new SideVariable<NDIM, double>(Q_var->getName() + "::Db", Q_depth);
+        Pointer<SideVariable<NDIM, double> > Db_rhs_var =
+            new SideVariable<NDIM, double>(Q_var->getName() + "::Db_RHS", Q_depth);
+        Pointer<CellVariable<NDIM, double> > Fb_var =
+            new CellVariable<NDIM, double>(Q_var->getName() + "::Fb", Q_depth);
+        d_Q_Cb_map[Q_var] = Cb_var;
+        d_Q_Cb_rhs_map[Q_var] = Cb_rhs_var;
+        d_Q_Db_map[Q_var] = Db_var;
+        d_Q_Db_rhs_map[Q_var] = Db_rhs_var;
+        d_Q_Fb_map[Q_var] = Fb_var;
+        int Cb_current_idx, Cb_scratch_idx, Cb_rhs_scratch_idx, Db_current_idx, Db_scratch_idx, Db_rhs_scratch_idx,
+            Fb_scratch_idx;
+        registerVariable(Cb_current_idx, Cb_var, no_ghosts, getCurrentContext());
+        registerVariable(Cb_scratch_idx, Cb_var, no_ghosts, getScratchContext());
+        registerVariable(Cb_rhs_scratch_idx, Cb_rhs_var, no_ghosts, getScratchContext());
+        registerVariable(Db_current_idx, Db_var, no_ghosts, getCurrentContext());
+        registerVariable(Db_scratch_idx, Db_var, side_ghosts, getScratchContext());
+        registerVariable(Db_rhs_scratch_idx, Db_rhs_var, side_ghosts, getScratchContext());
+        registerVariable(Fb_scratch_idx, Fb_var, no_ghosts, getScratchContext());
     }
 
     // Perform hierarchy initialization operations common to all implementations
@@ -536,8 +550,10 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
         Pointer<CellVariable<NDIM, double> > Q_rhs_var = d_Q_Q_rhs_map[Q_var];
         Pointer<SideVariable<NDIM, double> > D_var = d_Q_diffusion_coef_variable[Q_var];
         Pointer<SideVariable<NDIM, double> > D_rhs_var = d_diffusion_coef_rhs_map[D_var];
-        Pointer<CellVariable<NDIM, double> > C_var = d_Q_C_map[Q_var];
-        Pointer<CellVariable<NDIM, double> > C_rhs_var = d_Q_C_rhs_map[Q_var];
+        Pointer<CellVariable<NDIM, double> > Cb_var = d_Q_Cb_map[Q_var];
+        Pointer<CellVariable<NDIM, double> > Cb_rhs_var = d_Q_Cb_rhs_map[Q_var];
+        Pointer<SideVariable<NDIM, double> > Db_var = d_Q_Db_map[Q_var];
+        Pointer<SideVariable<NDIM, double> > Db_rhs_var = d_Q_Db_rhs_map[Q_var];
         TimeSteppingType diffusion_time_stepping_type = d_Q_diffusion_time_stepping_type[Q_var];
         const double lambda = d_Q_damping_coef[Q_var];
         const std::vector<RobinBcCoefStrategy<NDIM>*>& Q_bc_coef = d_Q_bc_coef[Q_var];
@@ -553,13 +569,21 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
 
         const bool apply_brinkman =
             d_brinkman_penalization && d_brinkman_penalization->hasBrinkmanBoundaryCondition(Q_var);
-        int C_current_idx = -1, C_scratch_idx = -1;
-        int C_rhs_scratch_idx = -1;
+        int Cb_current_idx = -1, Cb_scratch_idx = -1, Cb_rhs_scratch_idx = -1;
+        int Db_current_idx = -1, Db_scratch_idx = -1, Db_rhs_scratch_idx = -1;
         if (apply_brinkman)
         {
-            C_current_idx = var_db->mapVariableAndContextToIndex(C_var, getCurrentContext());
-            C_scratch_idx = var_db->mapVariableAndContextToIndex(C_var, getScratchContext());
-            C_rhs_scratch_idx = var_db->mapVariableAndContextToIndex(C_rhs_var, getScratchContext());
+            Cb_current_idx = var_db->mapVariableAndContextToIndex(Cb_var, getCurrentContext());
+            Cb_scratch_idx = var_db->mapVariableAndContextToIndex(Cb_var, getScratchContext());
+            Cb_rhs_scratch_idx = var_db->mapVariableAndContextToIndex(Cb_rhs_var, getScratchContext());
+            Db_current_idx = var_db->mapVariableAndContextToIndex(Db_var, getCurrentContext());
+            Db_scratch_idx = var_db->mapVariableAndContextToIndex(Db_var, getScratchContext());
+            Db_rhs_scratch_idx = var_db->mapVariableAndContextToIndex(Db_rhs_var, getScratchContext());
+
+            // Compute the Brinkman penalization contributions to the linear operators and RHS for Q_var
+            d_brinkman_penalization->computeBrinkmanDampingCoefficient(Cb_current_idx, Q_var, lambda);
+            d_brinkman_penalization->computeBrinkmanDiffusionCoefficient(
+                Db_current_idx, Q_var, D_current_idx, d_Q_diffusion_coef[Q_var]);
         }
 
         // Setup the problem coefficients for the linear solve for Q(n+1).
@@ -586,36 +610,43 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
         PoissonSpecifications rhs_op_spec(d_object_name + "::rhs_op_spec::" + Q_var->getName());
         if (apply_brinkman)
         {
-            // set 1.0/dt + K*lambda + K*chi*(1-Hphi) in solver_spec
-            d_brinkman_penalization->computeBrinkmanOperator(C_current_idx, Q_var);
-            d_hier_cc_data_ops->scale(C_scratch_idx, K, C_current_idx);
-            d_hier_cc_data_ops->addScalar(C_scratch_idx, C_scratch_idx, 1.0 / dt + K * lambda);
-            solver_spec.setCPatchDataId(C_scratch_idx);
+            // set 1.0/dt + K*Cb in solver_spec (lambda is included within Cb).
+            d_hier_cc_data_ops->scale(Cb_scratch_idx, K, Cb_current_idx);
+            d_hier_cc_data_ops->addScalar(Cb_scratch_idx, Cb_scratch_idx, 1.0 / dt);
+            solver_spec.setCPatchDataId(Cb_scratch_idx);
 
-            // set 1.0/dt - (1.0-K)*lambda - (1.0-K)*chi*(1-Hphi) in rhs_op_spec, which is applied to Q later
-            d_hier_cc_data_ops->scale(C_rhs_scratch_idx, -(1.0 - K), C_current_idx);
-            d_hier_cc_data_ops->addScalar(C_rhs_scratch_idx, C_rhs_scratch_idx, 1.0 / dt - (1.0 - K) * lambda);
-            rhs_op_spec.setCPatchDataId(C_rhs_scratch_idx);
+            // set 1.0/dt - (1.0-K)*Cb in rhs_op_spec, which is applied to Q later
+            d_hier_cc_data_ops->scale(Cb_rhs_scratch_idx, -(1.0 - K), Cb_current_idx);
+            d_hier_cc_data_ops->addScalar(Cb_rhs_scratch_idx, Cb_rhs_scratch_idx, 1.0 / dt);
+            rhs_op_spec.setCPatchDataId(Cb_rhs_scratch_idx);
+
+            // set -K*Db in solver_spec (kappa is included within Db)
+            d_hier_sc_data_ops->scale(Db_scratch_idx, -K, Db_current_idx);
+            solver_spec.setDPatchDataId(Db_scratch_idx);
+            // set (1.0-K)*Db in rhs_op_spec
+            d_hier_sc_data_ops->scale(Db_rhs_scratch_idx, (1.0 - K), Db_current_idx);
+            rhs_op_spec.setDPatchDataId(Db_rhs_scratch_idx);
         }
         else
         {
             solver_spec.setCConstant(1.0 / dt + K * lambda);
             rhs_op_spec.setCConstant(1.0 / dt - (1.0 - K) * lambda);
-        }
-        if (isDiffusionCoefficientVariable(Q_var))
-        {
-            // set -K*kappa in solver_spec
-            d_hier_sc_data_ops->scale(D_scratch_idx, -K, D_current_idx);
-            solver_spec.setDPatchDataId(D_scratch_idx);
-            // set (1.0-K)*kappa in rhs_op_spec
-            d_hier_sc_data_ops->scale(D_rhs_scratch_idx, (1.0 - K), D_current_idx);
-            rhs_op_spec.setDPatchDataId(D_rhs_scratch_idx);
-        }
-        else
-        {
-            const double kappa = d_Q_diffusion_coef[Q_var];
-            solver_spec.setDConstant(-K * kappa);
-            rhs_op_spec.setDConstant(+(1.0 - K) * kappa);
+
+            if (isDiffusionCoefficientVariable(Q_var))
+            {
+                // set -K*kappa in solver_spec
+                d_hier_sc_data_ops->scale(D_scratch_idx, -K, D_current_idx);
+                solver_spec.setDPatchDataId(D_scratch_idx);
+                // set (1.0-K)*kappa in rhs_op_spec
+                d_hier_sc_data_ops->scale(D_rhs_scratch_idx, (1.0 - K), D_current_idx);
+                rhs_op_spec.setDPatchDataId(D_rhs_scratch_idx);
+            }
+            else
+            {
+                const double kappa = d_Q_diffusion_coef[Q_var];
+                solver_spec.setDConstant(-K * kappa);
+                rhs_op_spec.setDConstant(+(1.0 - K) * kappa);
+            }
         }
 
         // Initialize the RHS operator and compute the RHS vector.
@@ -738,7 +769,7 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
         Pointer<CellVariable<NDIM, double> > Q_var = *cit;
         Pointer<CellVariable<NDIM, double> > F_var = d_Q_F_map[Q_var];
         Pointer<CellVariable<NDIM, double> > Q_rhs_var = d_Q_Q_rhs_map[Q_var];
-        Pointer<CellVariable<NDIM, double> > B_var = d_Q_B_map[Q_var];
+        Pointer<CellVariable<NDIM, double> > Fb_var = d_Q_Fb_map[Q_var];
 
         const int Q_scratch_idx = var_db->mapVariableAndContextToIndex(Q_var, getScratchContext());
         const int Q_new_idx = var_db->mapVariableAndContextToIndex(Q_var, getNewContext());
@@ -749,10 +780,10 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
 
         const bool apply_brinkman =
             d_brinkman_penalization && d_brinkman_penalization->hasBrinkmanBoundaryCondition(Q_var);
-        int B_scratch_idx = -1;
+        int Fb_scratch_idx = -1;
         if (apply_brinkman)
         {
-            B_scratch_idx = var_db->mapVariableAndContextToIndex(B_var, getScratchContext());
+            Fb_scratch_idx = var_db->mapVariableAndContextToIndex(Fb_var, getScratchContext());
         }
 
         // Update the advection velocity.
@@ -861,8 +892,8 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
         // Account for optional Brinkman RHS forcing terms chi*(1-Hphi)*Q_bc.
         if (apply_brinkman)
         {
-            d_brinkman_penalization->computeBrinkmanForcing(B_scratch_idx, Q_var);
-            d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, 1.0, B_scratch_idx, Q_rhs_scratch_idx);
+            d_brinkman_penalization->computeBrinkmanForcing(Fb_scratch_idx, Q_var);
+            d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, 1.0, Fb_scratch_idx, Q_rhs_scratch_idx);
         }
 
         if (isDiffusionCoefficientVariable(Q_var) || (d_Q_diffusion_coef[Q_var] != 0.0))
@@ -911,7 +942,7 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
 
         if (apply_brinkman)
         {
-            d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -1.0, B_scratch_idx, Q_rhs_scratch_idx);
+            d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -1.0, Fb_scratch_idx, Q_rhs_scratch_idx);
         }
     }
 

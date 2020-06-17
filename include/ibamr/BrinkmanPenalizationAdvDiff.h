@@ -87,7 +87,7 @@ public:
     /*!
      * \brief Set Brinkman penalization penalty factor.
      */
-    void setBrinkmanCoefficient(double chi);
+    void setBrinkmanCoefficient(double eta);
 
     /*
      * \brief Get the name of the object.
@@ -102,7 +102,7 @@ public:
      */
     double getBrinkmanCoefficient() const
     {
-        return d_chi;
+        return d_eta;
     } // getBrinkmanCoefficient
 
     /*
@@ -139,17 +139,41 @@ public:
         std::vector<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > > ls_solid_vars,
         std::vector<std::string> bc_types,
         std::vector<double> bc_vals);
-    /*
-     * \brief Function to compute the Brinkman contribution to the linear operator and RHS of the
-     * advection-diffusion integrator for a specified transported quantity Q_var.
-     */
-    void computeBrinkmanOperator(int C_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
 
     /*
-     * \brief Function to compute the Brinkman forcing contribution to the RHS of the advection-diffusion integrator
-     * for a specified transported quantity Q_var.
+     * \brief Function to compute the cell-centered coefficient to the damping linear operator
+     * and RHS of the advection-diffusion equation for a specified transported quantity Q_var with damping
+     * coefficient lambda.
+     *
+     * For Dirichlet BCs, \f$ C = \lambda + \chi/\eta \f$ where \f$\chi = 1-H\f$.
+     * For Neumann BCs, \f$ C = (1 - \chi) \lambda + \f$ where \f$\chi = 1-H\f$
      */
-    void computeBrinkmanForcing(int C_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
+    void computeBrinkmanDampingCoefficient(int C_idx,
+                                           SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
+                                           double lambda);
+
+    /*
+     * \brief Function to compute the side-centered coefficient to the diffusion linear operator
+     * and RHS of the advection-diffusion equation for a specified transported quantity Q_var with diffusion
+     * coefficient kappa. Note that this function is able to handle both constant and variable kappa.
+     *
+     * For Dirichlet BCs, \f$ D = kappa \f$.
+     * For Neumann BCs, \f$ D = (1 - \chi) \kappa + \eta \chi \lambda + \f$ where \f$\chi = 1-H\f$
+     */
+    void computeBrinkmanDiffusionCoefficient(int D_idx,
+                                             SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
+                                             int kappa_idx,
+                                             double kappa);
+
+    /*
+     * \brief Function to compute the Brinkman forcing contribution to the RHS of the advection-diffusion solver
+     * for a specified transported quantity Q_var.
+     *
+     * For Dirichlet BCs, \f$ F = \chi/\eta Q_{bc}\f$ where \f$\chi = 1-H\f$
+     * For homogenous Neumann BCs, \f$ F = 0\f$
+     * For inhomogenous Neumann BCs, TODO (user must provide a function \beta)
+     */
+    void computeBrinkmanForcing(int F_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
 
 private:
     /*!
@@ -172,20 +196,6 @@ private:
      */
     BrinkmanPenalizationAdvDiff& operator=(const BrinkmanPenalizationAdvDiff& that) = delete;
 
-    /*!
-     * \brief Function to compute the Brinkman contribution for Dirichlet boundary conditions
-     * \f$ \chi (1 - H)\f$ to the linear operator and RHS of the advection-diffusion integrator
-     * for a given Brinkman penalization zone.
-     */
-    void computeDirichletBrinkmanOperator(int C_idx, int phi_idx);
-
-    /*!
-     * \brief Function to compute the Brinkman forcing for Dirichlet boundary conditions
-     * \f$ \chi (1 - H) Q\f$ for the RHS of the advection-diffusion integrator for a given
-     * Brinkman penalization zone.
-     */
-    void computeDirichletBrinkmanForcing(int C_idx, int phi_idx, double bc_val);
-
     /*
      * Object name.
      */
@@ -205,7 +215,7 @@ private:
     /*
      * Brinkman coefficient.
      */
-    double d_chi = 1e4;
+    double d_eta = 1e-4;
 
     /*
      * Map for storing transported variables and various registered BCs
