@@ -231,10 +231,29 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanDiffusionCoefficient(int D_idx,
         // Get the solid level set info
         VariableDatabase<NDIM>* var_db = VariableDatabase<NDIM>::getDatabase();
         const int phi_idx = var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getCurrentContext());
+        const int phi_scratch_idx =
+            var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getScratchContext());
 
         Pointer<PatchHierarchy<NDIM> > patch_hierarchy = d_adv_diff_solver->getPatchHierarchy();
         const int coarsest_ln = 0;
         const int finest_ln = patch_hierarchy->getFinestLevelNumber();
+
+        // Fill the ghost cells of phi_scratch
+        typedef HierarchyGhostCellInterpolation::InterpolationTransactionComponent InterpolationTransactionComponent;
+        std::vector<InterpolationTransactionComponent> phi_transaction_comps(1);
+        phi_transaction_comps[0] =
+            InterpolationTransactionComponent(phi_scratch_idx,
+                                              phi_idx,
+                                              "CONSERVATIVE_LINEAR_REFINE",
+                                              false,
+                                              "CONSERVATIVE_COARSEN",
+                                              "LINEAR",
+                                              false,
+                                              d_adv_diff_solver->getPhysicalBcCoefs(ls_solid_var));
+        Pointer<HierarchyGhostCellInterpolation> hier_bdry_fill = new HierarchyGhostCellInterpolation();
+        hier_bdry_fill->initializeOperatorState(phi_transaction_comps, patch_hierarchy);
+        hier_bdry_fill->fillData(d_current_time);
+
         for (int ln = coarsest_ln; ln <= finest_ln; ++ln)
         {
             Pointer<PatchLevel<NDIM> > level = patch_hierarchy->getPatchLevel(ln);
@@ -246,7 +265,7 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanDiffusionCoefficient(int D_idx,
                 const double* patch_dx = patch_geom->getDx();
                 const double alpha = 2.0 * patch_dx[0]; // TODO: More general expression for width?
 
-                Pointer<CellData<NDIM, double> > ls_solid_data = patch->getPatchData(phi_idx);
+                Pointer<CellData<NDIM, double> > ls_solid_data = patch->getPatchData(phi_scratch_idx);
                 Pointer<SideData<NDIM, double> > D_data = patch->getPatchData(D_idx);
 
                 // There is no Brinkman contribution to the diffusion coefficient for Dirichlet BCs
@@ -382,6 +401,71 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanForcing(int F_idx, Pointer<CellVaria
                     // This statement should not be reached
                     TBOX_ERROR("Error in BrinkmanPenalizationAdvDiff::computeBrinkmanForcing: \n"
                                << "bc_type = " << enum_to_string(bc_type) << "\n");
+                }
+            }
+        }
+    }
+    return;
+}
+
+void
+BrinkmanPenalizationAdvDiff::maskForcingTerm(int N_idx, Pointer<CellVariable<NDIM, double> > Q_var)
+{
+#if !defined(NDEBUG)
+    TBOX_ASSERT(d_Q_bc.find(Q_var) != d_Q_bc.end());
+#endif
+    auto brinkman_zones = d_Q_bc[Q_var];
+    for (const auto& bc_tup : brinkman_zones)
+    {
+        // Get the BC specifications for each zone
+        AdvDiffBrinkmanPenalizationBcType bc_type = std::get<1>(bc_tup);
+
+        if (bc_type == DIRICHLET) continue;
+#if !defined(NDEBUG)
+        TBOX_ASSERT(bc_type == NEUMANN);
+#endif
+
+        // Get the solid level set info
+        Pointer<CellVariable<NDIM, double> > ls_solid_var = std::get<0>(bc_tup);
+        VariableDatabase<NDIM>* var_db = VariableDatabase<NDIM>::getDatabase();
+        const int phi_idx = var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getCurrentContext());
+
+        Pointer<PatchHierarchy<NDIM> > patch_hierarchy = d_adv_diff_solver->getPatchHierarchy();
+        const int coarsest_ln = 0;
+        const int finest_ln = patch_hierarchy->getFinestLevelNumber();
+        for (int ln = coarsest_ln; ln <= finest_ln; ++ln)
+        {
+            Pointer<PatchLevel<NDIM> > level = patch_hierarchy->getPatchLevel(ln);
+            for (PatchLevel<NDIM>::Iterator p(level); p; p++)
+            {
+                Pointer<Patch<NDIM> > patch = level->getPatch(p());
+                const Pointer<CartesianPatchGeometry<NDIM> > patch_geom = patch->getPatchGeometry();
+                const Box<NDIM>& patch_box = patch->getBox();
+                const double* patch_dx = patch_geom->getDx();
+                const double alpha = 2.0 * patch_dx[0]; // TODO: More general expression for width?
+
+                Pointer<CellData<NDIM, double> > ls_solid_data = patch->getPatchData(phi_idx);
+                Pointer<CellData<NDIM, double> > N_data = patch->getPatchData(N_idx);
+
+                for (Box<NDIM>::Iterator it(patch_box); it; it++)
+                {
+                    CellIndex<NDIM> ci(it());
+                    double phi = (*ls_solid_data)(ci);
+                    double Hphi;
+                    if (phi < -alpha)
+                    {
+                        Hphi = 0.0;
+                    }
+                    else if (std::abs(phi) <= alpha)
+                    {
+                        Hphi = 0.5 + 0.5 * phi / alpha + 1.0 / (2.0 * M_PI) * std::sin(M_PI * phi / alpha);
+                    }
+                    else
+                    {
+                        Hphi = 1.0;
+                    }
+                    const double chi = (1.0 - Hphi);
+                    (*N_data)(ci) = (1.0 - chi) * (*N_data)(ci);
                 }
             }
         }

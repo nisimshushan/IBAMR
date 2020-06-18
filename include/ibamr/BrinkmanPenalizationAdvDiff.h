@@ -169,11 +169,20 @@ public:
      * \brief Function to compute the Brinkman forcing contribution to the RHS of the advection-diffusion solver
      * for a specified transported quantity Q_var.
      *
-     * For Dirichlet BCs, \f$ F = \chi/\eta Q_{bc}\f$ where \f$\chi = 1-H\f$
-     * For homogenous Neumann BCs, \f$ F = 0\f$
-     * For inhomogenous Neumann BCs, TODO (user must provide a function \beta)
+     * For Dirichlet BCs, \f$ F = \chi/\eta Q_{bc}\f$ where \f$\chi = 1-H\f$.
+     * For homogenous Neumann BCs, \f$ F = 0\f$.
+     * For inhomogenous Neumann BCs, TODO (user must provide a function \f$ \beta\f$)
      */
     void computeBrinkmanForcing(int F_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
+
+    /*
+     * \brief Function to mask the additional forcing terms on the RHS of the advection-diffusion solver
+     * e.g. \f$ u \dot \grad Q\f$ and body forces.
+     *
+     * For Dirichlet BCs, no masking function is applied.
+     * For Neumann BCs, \f$ N = (1-\chi) N\f$ where \f$\chi = 1-H\f$.
+     */
+    void maskForcingTerm(int N_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
 
 private:
     /*!

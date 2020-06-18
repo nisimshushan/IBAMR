@@ -722,6 +722,10 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
             d_Q_convective_op[Q_var]->applyConvectiveOperator(Q_scratch_idx, N_scratch_idx);
             const int N_old_new_idx = var_db->mapVariableAndContextToIndex(N_old_var, getNewContext());
             d_hier_cc_data_ops->copyData(N_old_new_idx, N_scratch_idx);
+
+            // Mask the convective operator due to Brinkman penalization
+            if (apply_brinkman) d_brinkman_penalization->maskForcingTerm(N_scratch_idx, Q_var);
+
             if (convective_time_stepping_type == FORWARD_EULER)
             {
                 d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -1.0, N_scratch_idx, Q_rhs_scratch_idx);
@@ -872,6 +876,10 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
                 d_hier_cc_data_ops->linearSum(
                     N_scratch_idx, 1.0 + 0.5 * omega, N_scratch_idx, -0.5 * omega, N_old_current_idx);
             }
+
+            // Mask the convective operator due to Brinkman penalization
+            if (apply_brinkman) d_brinkman_penalization->maskForcingTerm(N_scratch_idx, Q_var);
+
             if (convective_time_stepping_type == ADAMS_BASHFORTH || convective_time_stepping_type == MIDPOINT_RULE)
             {
                 d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -1.0, N_scratch_idx, Q_rhs_scratch_idx);
@@ -886,10 +894,14 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
         if (d_F_fcn[F_var])
         {
             d_F_fcn[F_var]->setDataOnPatchHierarchy(F_scratch_idx, F_var, d_hierarchy, half_time);
+
+            // Mask the body forcing due to Brinkman penalization
+            if (apply_brinkman) d_brinkman_penalization->maskForcingTerm(F_scratch_idx, Q_var);
+
             d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, 1.0, F_scratch_idx, Q_rhs_scratch_idx);
         }
 
-        // Account for optional Brinkman RHS forcing terms chi*(1-Hphi)*Q_bc.
+        // Account for optional Brinkman RHS forcing terms
         if (apply_brinkman)
         {
             d_brinkman_penalization->computeBrinkmanForcing(Fb_scratch_idx, Q_var);
