@@ -57,8 +57,8 @@ namespace IBAMR
  * penalization zones for multiple transported quantities with various boundary conditions.
 
  * TODO: A description of the penalization terms for both Dirichlet and Neumann BCs
- * For Dirichlet BCs, inhomogenous and homogenous BCs are treated in the same way.
- * For Neumann BCs, homogenous BCs are fairly straightforward, while inhomogenous BCs require
+ * For Dirichlet BCs, inhomogeneous and homogeneous BCs are treated in the same way.
+ * For Neumann BCs, homogeneous BCs are fairly straightforward, while inhomogeneous BCs require
  * some additional input by the user. Add a reference to Sakurai's paper
  */
 class BrinkmanPenalizationAdvDiff
@@ -80,9 +80,17 @@ public:
      */
     void setTimeInterval(double current_time, double new_time);
 
-    // TODO:
-    void computeRHSBrinkman();
-    void computeCoefficientBrinkman();
+    /*!
+     * \brief Preprocess routine before computing Brinkman penalization terms.
+     *
+     */
+    void preprocessBrinkmanPenalizationAdvDiff(double current_time, double new_time, int num_cycles);
+
+    /*!
+     * \brief Postprocess routine after computing Brinkman penalization terms.
+     *
+     */
+    void postprocessBrinkmanPenalizationAdvDiff(double current_time, double new_time, int num_cycles);
 
     /*!
      * \brief Set Brinkman penalization penalty factor.
@@ -123,9 +131,25 @@ public:
         return d_Q_bc.find(Q_var) != d_Q_bc.end();
     } // hasBrinkmanBoundaryCondition
 
+    /*!
+     * \brief Function specifying the optional forcing function for inhomogeneous Neumann boundary conditions \f$ n \dot
+     * \Q = \gamma \f$
+     *
+     * The user must set the patch data B_idx such that \f$ n \dot B = \gamma \f$.
+     * The applied forcing term is then computed internally as \f$ \nabla \dot (\chi B) - \chi \nabla \dot B \f$.
+     * Note that B_idx contains side-centered patch data.
+     */
+    using BrinkmanInhomogeneousNeumannBCsFcnPtr = void (*)(int B_idx,
+                                                           SAMRAI::tbox::Pointer<IBTK::HierarchyMathOps> hier_math_ops,
+                                                           double time,
+                                                           void* ctx);
+
     /*
      * \brief Register a transported quantity with this object, along with the solid level set
-     * variables for which to apply a specified boundary condition.
+     * variable for which to apply a specified boundary condition.
+     *
+     * \note This function can only be used to register homogeneous/inhomogeneous Dirichlet BCs, and homogeneous Neumann
+     * BCs.
      */
 
     void
@@ -134,6 +158,13 @@ public:
                                       std::string bc_type,
                                       double bc_val);
 
+    /*
+     * \brief Register a transported quantity with this object, along with multiple solid level set
+     * variables for which to apply a specified boundary condition.
+     *
+     * \note This function can only be used to register homogeneous/inhomogeneous Dirichlet BCs, and homogeneous Neumann
+     * BCs.
+     */
     void registerBrinkmanBoundaryCondition(
         SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
         std::vector<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > > ls_solid_vars,
@@ -141,12 +172,25 @@ public:
         std::vector<double> bc_vals);
 
     /*
+     * \brief Register a transported quantity with this object, along with the solid level set variable
+     * on which to apply inhomogeneous Neumann boundary conditions.
+     *
+     * \note Inhomogeneous Neumann BCs are treated uniquely within this class and require additional user callback
+     * inputs.
+     */
+    void registerInhomogeneousNeumannBrinkmanBoundaryCondition(
+        SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
+        SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > ls_solid_var,
+        BrinkmanInhomogeneousNeumannBCsFcnPtr callback,
+        void* ctx);
+
+    /*
      * \brief Function to compute the cell-centered coefficient to the damping linear operator
      * and RHS of the advection-diffusion equation for a specified transported quantity Q_var with damping
      * coefficient lambda.
      *
      * For Dirichlet BCs, \f$ C = \lambda + \chi/\eta \f$ where \f$\chi = 1-H\f$.
-     * For Neumann BCs, \f$ C = (1 - \chi) \lambda + \f$ where \f$\chi = 1-H\f$
+     * For Neumann BCs, \f$ C = (1 - \chi) \lambda + \f$ where \f$\chi = 1-H\f$.
      */
     void computeBrinkmanDampingCoefficient(int C_idx,
                                            SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
@@ -170,8 +214,9 @@ public:
      * for a specified transported quantity Q_var.
      *
      * For Dirichlet BCs, \f$ F = \chi/\eta Q_{bc}\f$ where \f$\chi = 1-H\f$.
-     * For homogenous Neumann BCs, \f$ F = 0\f$.
-     * For inhomogenous Neumann BCs, TODO (user must provide a function \f$ \beta\f$)
+     * For homogeneous Neumann BCs, \f$ F = 0\f$.
+     * For inhomogeneous Neumann BCs, \f$ F = \nabla \dot (\chi B) - \chi \nabla \dot B \f$, with a user defined
+     * \f$B\f$.
      */
     void computeBrinkmanForcing(int F_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
 
@@ -232,8 +277,18 @@ private:
     std::map<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> >,
              std::vector<std::tuple<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> >,
                                     AdvDiffBrinkmanPenalizationBcType,
-                                    double> > >
+                                    double,
+                                    BrinkmanInhomogeneousNeumannBCsFcnPtr,
+                                    void*> > >
         d_Q_bc;
+
+    /*
+     * Patch data required for computing additional forcing for inhomogeneous Neumann BCs
+     */
+    SAMRAI::tbox::Pointer<SAMRAI::pdat::SideVariable<NDIM, double> > d_B_var;
+    int d_B_scratch_idx, d_B_chi_scratch_idx;
+    SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > d_div_var;
+    int d_div_B_scratch_idx, d_div_B_chi_scratch_idx, d_chi_scratch_idx;
 };
 
 } // namespace IBAMR
