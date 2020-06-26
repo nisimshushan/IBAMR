@@ -1865,16 +1865,15 @@ IBFEMethod::doInitializeFEData(const bool use_present_data)
                         if (node->n_dofs(F_sys_num))
                         {
                             const int F_dof_index = node->dof_number(F_sys_num, d, 0);
-                            DofConstraintRow F_constraint_row;
-                            F_constraint_row[F_dof_index] = 1.0;
-                            F_dof_map.add_constraint_row(F_dof_index, F_constraint_row, 0.0, false);
+                            // NOTE: The diagonal entry is automatically constrained.
+                            F_dof_map.add_constraint_row(F_dof_index, {}, 0.0, false);
                         }
                         if (node->n_dofs(U_sys_num))
                         {
                             const int U_dof_index = node->dof_number(U_sys_num, d, 0);
                             DofConstraintRow U_constraint_row;
-                            U_constraint_row[U_dof_index] = 1.0;
-                            U_dof_map.add_constraint_row(U_dof_index, U_constraint_row, 0.0, false);
+                            // NOTE: The diagonal entry is automatically constrained.
+                            U_dof_map.add_constraint_row(U_dof_index, {}, 0.0, false);
                         }
                     }
                 }
