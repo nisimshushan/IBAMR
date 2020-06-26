@@ -385,6 +385,11 @@ public:
     void registerStressNormalizationPart(unsigned int part = 0);
 
     /*!
+     * Indicate that a part should use pressure stabilization.
+     */
+    void registerPressureStabilizationPart(unsigned int part = 0);
+
+    /*!
      * Typedef specifying interface for Lagrangian mass source/sink distribution
      * function.
      */
@@ -712,6 +717,14 @@ protected:
                                     unsigned int part);
 
     /*!
+     * \brief Compute the pressure stabilization field.
+     */
+    void computePressureStabilization(libMesh::PetscVector<double>& P_vec,
+                                      libMesh::PetscVector<double>& X_vec,
+                                      double data_time,
+                                      unsigned int part);
+
+    /*!
      * \brief Spread the transmission force density along the physical boundary
      * of the Lagrangian structure.
      */
@@ -935,6 +948,13 @@ protected:
     double d_epsilon = 0.0;
     bool d_has_stress_normalization_parts = false;
     std::vector<bool> d_stress_normalization_part;
+
+    /*!
+     * Data related to handling pressure stabilization.
+     */
+    double d_kappa = 0.0;
+    bool d_has_pressure_stabilization_parts = false;
+    std::vector<bool> d_pressure_stabilization_part;
 
     /*!
      * Objects used to impose direct forcing kinematics.

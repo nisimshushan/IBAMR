@@ -247,6 +247,26 @@ get_x_and_FF(libMesh::VectorValue<double>& x,
     return;
 }
 
+inline void
+get_FF(libMesh::TensorValue<double>& FF,
+       const std::vector<VectorValue<double> >& grad_x_data,
+       const unsigned int dim = NDIM)
+{
+    FF.zero();
+    for (unsigned int i = 0; i < dim; ++i)
+    {
+        for (unsigned int j = 0; j < dim; ++j)
+        {
+            FF(i, j) = grad_x_data[i](j);
+        }
+    }
+    for (unsigned int i = dim; i < LIBMESH_DIM; ++i)
+    {
+        FF(i, i) = 1.0;
+    }
+    return;
+}
+
 const Real PENALTY = 1.e10;
 
 void
@@ -392,6 +412,7 @@ void
 IBFEMethod::registerStressNormalizationPart(unsigned int part)
 {
     TBOX_ASSERT(d_fe_equation_systems_initialized);
+    TBOX_ASSERT(!d_has_pressure_stabilization_parts);
     TBOX_ASSERT(part < d_meshes.size());
     if (d_stress_normalization_part[part]) return;
     d_has_stress_normalization_parts = true;
@@ -414,6 +435,32 @@ IBFEMethod::registerStressNormalizationPart(unsigned int part)
     setup_system_vectors(d_equation_systems[part].get(), { PRESSURE_SYSTEM_NAME }, vector_names);
     return;
 } // registerStressNormalizationPart
+
+void
+IBFEMethod::registerPressureStabilizationPart(unsigned int part)
+{
+    TBOX_ASSERT(d_fe_equation_systems_initialized);
+    TBOX_ASSERT(!d_has_stress_normalization_parts);
+    TBOX_ASSERT(part < d_meshes.size());
+    if (d_pressure_stabilization_part[part]) return;
+    d_has_pressure_stabilization_parts = true;
+    d_pressure_stabilization_part[part] = true;
+    auto& P_system = d_equation_systems[part]->add_system<ExplicitSystem>(PRESSURE_SYSTEM_NAME);
+    // This system has a single variable so we don't need to also specify diagonal coupling
+    P_system.add_variable("p_stab", d_fe_order_pressure[part], d_fe_family_pressure[part]);
+    // Setup cached system vectors at restart.
+    std::vector<std::string> vector_names;
+    switch (d_ib_solver->getTimeSteppingType())
+    {
+    case MIDPOINT_RULE:
+        vector_names = { "current", "half", "tmp", "RHS Vector" };
+        break;
+    default:
+        vector_names = { "current", "half", "new", "tmp", "RHS Vector" };
+    }
+    setup_system_vectors(d_equation_systems[part].get(), { PRESSURE_SYSTEM_NAME }, vector_names);
+    return;
+} // registerpressureStabilizationPart
 
 void
 IBFEMethod::registerLagBodySourceFunction(const LagBodySourceFcnData& data, const unsigned int part)
@@ -820,6 +867,11 @@ IBFEMethod::computeLagrangianForce(const double data_time)
         if (d_stress_normalization_part[part])
         {
             computeStressNormalization(
+                d_P_vecs->get(data_time_str, part), d_X_vecs->get(data_time_str, part), data_time, part);
+        }
+        if (d_pressure_stabilization_part[part])
+        {
+            computePressureStabilization(
                 d_P_vecs->get(data_time_str, part), d_X_vecs->get(data_time_str, part), data_time, part);
         }
         assembleInteriorForceDensityRHS(d_F_vecs->get("RHS Vector", part),
@@ -1714,6 +1766,11 @@ IBFEMethod::doInitializeFEData(const bool use_present_data)
         d_P_vecs.reset(
             new LibMeshSystemIBVectors(d_active_fe_data_managers, d_stress_normalization_part, PRESSURE_SYSTEM_NAME));
     }
+    if (d_has_pressure_stabilization_parts)
+    {
+        d_P_vecs.reset(
+            new LibMeshSystemIBVectors(d_active_fe_data_managers, d_pressure_stabilization_part, PRESSURE_SYSTEM_NAME));
+    }
     if (d_has_lag_body_source_parts)
     {
         d_Q_vecs.reset(
@@ -2043,6 +2100,93 @@ IBFEMethod::computeStressNormalization(PetscVector<double>& Phi_vec,
     Phi_vec = *Phi_system.solution;
     Phi_vec.close();
     return;
+}
+
+void
+IBFEMethod::computePressureStabilization(PetscVector<double>& P_vec,
+                                         PetscVector<double>& X_vec,
+                                         const double data_time,
+                                         const unsigned int part)
+{
+    // Extract the mesh.
+    EquationSystems& equation_systems = *d_primary_fe_data_managers[part]->getEquationSystems();
+    const MeshBase& mesh = equation_systems.get_mesh();
+    const BoundaryInfo& boundary_info = *mesh.boundary_info;
+    const unsigned int dim = mesh.mesh_dimension();
+
+    // Setup extra data needed to compute stresses/forces.
+
+    // Extract the FE systems and DOF maps, and setup the FE objects.
+    auto& P_system = equation_systems.get_system<ExplicitSystem>(PRESSURE_SYSTEM_NAME);
+    const DofMap& P_dof_map = P_system.get_dof_map();
+    FEDataManager::SystemDofMapCache& P_dof_map_cache =
+        *d_primary_fe_data_managers[part]->getDofMapCache(PRESSURE_SYSTEM_NAME);
+    FEType P_fe_type = P_dof_map.variable_type(0);
+    std::vector<int> P_vars = { 0 };
+    std::vector<int> no_vars = {};
+    auto& X_system = equation_systems.get_system<ExplicitSystem>(COORDS_SYSTEM_NAME);
+    std::vector<int> X_vars(NDIM);
+    for (unsigned int d = 0; d < NDIM; ++d) X_vars[d] = d;
+
+    FEDataInterpolation fe(dim, d_primary_fe_data_managers[part]->getFEData());
+    std::unique_ptr<QBase> qrule = QBase::build(QGAUSS, dim, FIFTH);
+    fe.attachQuadratureRule(qrule.get());
+    fe.evalQuadraturePoints();
+    fe.evalQuadratureWeights();
+    fe.registerSystem(P_system, P_vars, no_vars);
+    const size_t X_sys_idx = fe.registerInterpolatedSystem(X_system, no_vars, X_vars, &X_vec);
+    fe.init();
+
+    const std::vector<libMesh::Point>& q_point = fe.getQuadraturePoints();
+    const std::vector<double>& JxW = fe.getQuadratureWeights();
+    const std::vector<std::vector<double> >& phi = fe.getPhi(P_fe_type);
+
+    const std::vector<std::vector<std::vector<double> > >& fe_interp_var_data = fe.getVarInterpolation();
+    const std::vector<std::vector<std::vector<VectorValue<double> > > >& fe_interp_grad_var_data =
+        fe.getGradVarInterpolation();
+
+    // Setup global and elemental right-hand-side vectors.
+    NumericVector<double>* P_rhs_vec = P_system.rhs;
+    P_rhs_vec->zero();
+    DenseVector<double> P_rhs_e;
+
+    TensorValue<double> FF;
+    double P;
+    std::vector<libMesh::dof_id_type> dof_id_scratch;
+    const MeshBase::const_element_iterator el_begin = mesh.active_local_elements_begin();
+    const MeshBase::const_element_iterator el_end = mesh.active_local_elements_end();
+    for (MeshBase::const_element_iterator el_it = el_begin; el_it != el_end; ++el_it)
+    {
+        Elem* const elem = *el_it;
+        const auto& P_dof_indices = P_dof_map_cache.dof_indices(elem)[0];
+        P_rhs_e.resize(static_cast<int>(P_dof_indices.size()));
+        fe.reinit(elem);
+        fe.collectDataForInterpolation(elem);
+        fe.interpolate(elem);
+        const unsigned int n_qp = qrule->n_points();
+        const size_t n_basis = phi.size();
+        for (unsigned int qp = 0; qp < n_qp; ++qp)
+        {
+            const std::vector<VectorValue<double> >& grad_x_data = fe_interp_grad_var_data[qp][X_sys_idx];
+            get_FF(FF, grad_x_data);
+            double J = FF.det();
+            P = -d_kappa * std::log(J);
+            for (unsigned int k = 0; k < n_basis; ++k)
+            {
+                P_rhs_e(k) += P * phi[k][qp] * JxW[qp];
+            }
+        }
+
+        // Apply constraints (e.g., enforce periodic boundary conditions)
+        // and add the elemental contributions to the global vector.
+        dof_id_scratch = P_dof_indices;
+        P_dof_map.constrain_element_vector(P_rhs_e, dof_id_scratch);
+        P_rhs_vec->add_vector(P_rhs_e, dof_id_scratch);
+    }
+
+    // Solve for P.
+    d_primary_fe_data_managers[part]->computeL2Projection(
+        P_vec, *P_rhs_vec, PRESSURE_SYSTEM_NAME, d_use_consistent_mass_matrix);
 }
 
 void
@@ -2796,9 +2940,11 @@ IBFEMethod::commonConstructor(const std::string& object_name,
     d_default_spread_spec = FEDataManager::SpreadSpec(
         "IB_4", QGAUSS, INVALID_ORDER, use_adaptive_quadrature, point_density, use_nodal_quadrature);
 
-    // Indicate that all of the parts do NOT use stress normalization by default
-    // and set some default values.
+    // Indicate that all of the parts do NOT use stress normalization by default.
     d_stress_normalization_part.resize(d_meshes.size(), false);
+
+    // Indicate that all of the parts do NOT use pressure stabilization by default.
+    d_pressure_stabilization_part.resize(d_meshes.size(), false);
 
     // Initialize function data to NULL.
     d_coordinate_mapping_fcn_data.resize(d_meshes.size());
@@ -3057,6 +3203,8 @@ IBFEMethod::getFromInput(const Pointer<Database>& db, bool /*is_from_restart*/)
         d_skip_initial_workload_log = db->getBool("skip_initial_workload_log");
 
     if (db->isDouble("epsilon")) d_epsilon = db->getDouble("epsilon");
+
+    if (db->isDouble("kappa")) d_kappa = db->getDouble("kappa");
 
     d_libmesh_partitioner_type =
         string_to_enum<LibmeshPartitionerType>(db->getStringWithDefault("libmesh_partitioner_type", "LIBMESH_DEFAULT"));
