@@ -780,8 +780,8 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
             Fb_scratch_idx = var_db->mapVariableAndContextToIndex(Fb_var, getScratchContext());
 
             // Compute the Brinkman penalization contributions to the linear operators and RHS for Q_var
-            d_brinkman_penalization->computeBrinkmanDampingCoefficient(Cb_current_idx, Q_var, lambda);
-            d_brinkman_penalization->computeBrinkmanDiffusionCoefficient(
+            d_brinkman_penalization->computeDampingCoefficient(Cb_current_idx, Q_var, lambda);
+            d_brinkman_penalization->computeDiffusionCoefficient(
                 Db_current_idx, Q_var, D_current_idx, d_Q_diffusion_coef[Q_var]);
 
             // Setup the problem coefficients for the linear solve
@@ -997,7 +997,7 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
         // Account for optional Brinkman RHS forcing terms
         if (apply_brinkman)
         {
-            d_brinkman_penalization->computeBrinkmanForcing(Fb_scratch_idx, Q_var);
+            d_brinkman_penalization->computeForcing(Fb_scratch_idx, Q_var);
             d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, 1.0, Fb_scratch_idx, Q_rhs_scratch_idx);
         }
 

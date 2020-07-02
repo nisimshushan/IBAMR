@@ -139,18 +139,18 @@ BrinkmanPenalizationAdvDiff::postprocessBrinkmanPenalizationAdvDiff(double /*cur
 } // postprocessBrinkmanPenalizationAdvDiff
 
 void
-BrinkmanPenalizationAdvDiff::setBrinkmanCoefficient(double eta)
+BrinkmanPenalizationAdvDiff::setPenaltyCoefficient(double eta)
 {
     // TODO: Allow for flexibility in setting eta for different Q and level sets?
     d_eta = eta;
     return;
-} // setBrinkmanCoefficient
+} // setPenaltyCoefficient
 
 void
-BrinkmanPenalizationAdvDiff::registerBrinkmanBoundaryCondition(Pointer<CellVariable<NDIM, double> > Q_var,
-                                                               Pointer<CellVariable<NDIM, double> > ls_solid_var,
-                                                               std::string bc_type,
-                                                               double bc_val)
+BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC(Pointer<CellVariable<NDIM, double> > Q_var,
+                                                                   Pointer<CellVariable<NDIM, double> > ls_solid_var,
+                                                                   std::string bc_type,
+                                                                   double bc_val)
 {
 #if !defined(NDEBUG)
     TBOX_ASSERT(Q_var);
@@ -159,7 +159,7 @@ BrinkmanPenalizationAdvDiff::registerBrinkmanBoundaryCondition(Pointer<CellVaria
     auto bc_type_enum = string_to_enum<AdvDiffBrinkmanPenalizationBcType>(bc_type);
     if (bc_type_enum != DIRICHLET && bc_type_enum != NEUMANN)
     {
-        TBOX_ERROR("BrinkmanPenalizationAdvDiff::registerBrinkmanBoundaryCondition\n"
+        TBOX_ERROR("BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC\n"
                    << "  unsupported Brinkman penalization BC type: "
                    << enum_to_string<AdvDiffBrinkmanPenalizationBcType>(bc_type_enum) << " \n"
                    << "  valid choices are: DIRICHLET, NEUMANN\n");
@@ -167,10 +167,10 @@ BrinkmanPenalizationAdvDiff::registerBrinkmanBoundaryCondition(Pointer<CellVaria
 
     if (bc_type_enum == NEUMANN && bc_val != 0.0)
     {
-        TBOX_ERROR("BrinkmanPenalizationAdvDiff::registerBrinkmanBoundaryCondition\n"
+        TBOX_ERROR("BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC\n"
                    << "  this function can only be used to register homogeneous/inhomogeneous Dirichlet BCs\n"
                    << "  and homogeneous Neumann BCs. Inhomogeneous Neumann BCs must be registered with\n"
-                   << "  BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBrinkmanBoundaryCondition\n");
+                   << "  BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC\n");
     }
 
     // Store BC options within the map
@@ -183,7 +183,7 @@ BrinkmanPenalizationAdvDiff::registerBrinkmanBoundaryCondition(Pointer<CellVaria
             {
                 if (std::get<0>(tup) == ls_solid_var)
                 {
-                    TBOX_ERROR("BrinkmanPenalizationAdvDiff::registerBrinkmanBoundaryCondition\n"
+                    TBOX_ERROR("BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC\n"
                                << "  two separate boundary conditions on level set variable " << ls_solid_var->getName()
                                << " \n"
                                << "  are being registered for transported quantity " << Q_var->getName() << "\n");
@@ -198,10 +198,10 @@ BrinkmanPenalizationAdvDiff::registerBrinkmanBoundaryCondition(Pointer<CellVaria
     auto bc_tuple = std::make_tuple(ls_solid_var, bc_type_enum, bc_val, callback, ctx);
     d_Q_bc[Q_var].push_back(bc_tuple);
     return;
-} // registerBrinkmanBoundaryCondition
+} // registerDirichletHomogeneousNeumannBC
 
 void
-BrinkmanPenalizationAdvDiff::registerBrinkmanBoundaryCondition(
+BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC(
     Pointer<CellVariable<NDIM, double> > Q_var,
     std::vector<Pointer<CellVariable<NDIM, double> > > ls_solid_vars,
     std::vector<string> bc_types,
@@ -210,17 +210,16 @@ BrinkmanPenalizationAdvDiff::registerBrinkmanBoundaryCondition(
     TBOX_ASSERT(ls_solid_vars.size() == bc_types.size() == bc_vals.size());
     for (int i = 0; i < ls_solid_vars.size(); ++i)
     {
-        registerBrinkmanBoundaryCondition(Q_var, ls_solid_vars[i], bc_types[i], bc_vals[i]);
+        registerDirichletHomogeneousNeumannBC(Q_var, ls_solid_vars[i], bc_types[i], bc_vals[i]);
     }
     return;
-} // registerBrinkmanBoundaryCondition
+} // registerDirichletHomogeneousNeumannBC
 
 void
-BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBrinkmanBoundaryCondition(
-    Pointer<CellVariable<NDIM, double> > Q_var,
-    Pointer<CellVariable<NDIM, double> > ls_solid_var,
-    BrinkmanInhomogeneousNeumannBCsFcnPtr callback,
-    void* ctx)
+BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBC(Pointer<CellVariable<NDIM, double> > Q_var,
+                                                            Pointer<CellVariable<NDIM, double> > ls_solid_var,
+                                                            BrinkmanInhomogeneousNeumannBCsFcnPtr callback,
+                                                            void* ctx)
 {
 #if !defined(NDEBUG)
     TBOX_ASSERT(Q_var);
@@ -238,7 +237,7 @@ BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBrinkmanBoundaryConditi
             {
                 if (std::get<0>(tup) == ls_solid_var)
                 {
-                    TBOX_ERROR("BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBrinkmanBoundaryCondition\n"
+                    TBOX_ERROR("BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBC\n"
                                << "  two separate boundary conditions on level set variable " << ls_solid_var->getName()
                                << " \n"
                                << "  are being registered for transported quantity " << Q_var->getName() << "\n");
@@ -253,12 +252,12 @@ BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBrinkmanBoundaryConditi
     auto bc_tuple = std::make_tuple(ls_solid_var, bc_type_enum, bc_val, callback, ctx);
     d_Q_bc[Q_var].push_back(bc_tuple);
     return;
-} // registerInhomogeneousNeumannBrinkmanBoundaryCondition
+} // registerInhomogeneousNeumannBC
 
 void
-BrinkmanPenalizationAdvDiff::computeBrinkmanDampingCoefficient(int C_idx,
-                                                               Pointer<CellVariable<NDIM, double> > Q_var,
-                                                               double lambda)
+BrinkmanPenalizationAdvDiff::computeDampingCoefficient(int C_idx,
+                                                       Pointer<CellVariable<NDIM, double> > Q_var,
+                                                       double lambda)
 {
 #if !defined(NDEBUG)
     TBOX_ASSERT(d_Q_bc.find(Q_var) != d_Q_bc.end());
@@ -320,7 +319,7 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanDampingCoefficient(int C_idx,
                     else
                     {
                         // This statement should not be reached
-                        TBOX_ERROR("Error in BrinkmanPenalizationAdvDiff::computeBrinkmanDampingCoefficient: \n"
+                        TBOX_ERROR("Error in BrinkmanPenalizationAdvDiff::computeDampingCoefficient: \n"
                                    << "bc_type = " << enum_to_string(bc_type) << "\n");
                     }
                 }
@@ -328,13 +327,13 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanDampingCoefficient(int C_idx,
         }
     }
     return;
-} // computeBrinkmanDampingCoefficient
+} // computeDampingCoefficient
 
 void
-BrinkmanPenalizationAdvDiff::computeBrinkmanDiffusionCoefficient(int D_idx,
-                                                                 Pointer<CellVariable<NDIM, double> > Q_var,
-                                                                 int kappa_idx,
-                                                                 double kappa)
+BrinkmanPenalizationAdvDiff::computeDiffusionCoefficient(int D_idx,
+                                                         Pointer<CellVariable<NDIM, double> > Q_var,
+                                                         int kappa_idx,
+                                                         double kappa)
 {
 #if !defined(NDEBUG)
     TBOX_ASSERT(d_Q_bc.find(Q_var) != d_Q_bc.end());
@@ -436,17 +435,17 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanDiffusionCoefficient(int D_idx,
                 else
                 {
                     // This statement should not be reached
-                    TBOX_ERROR("Error in BrinkmanPenalizationAdvDiff::computeBrinkmanDiffusionCoefficient: \n"
+                    TBOX_ERROR("Error in BrinkmanPenalizationAdvDiff::computeDiffusionCoefficient: \n"
                                << "bc_type = " << enum_to_string(bc_type) << "\n");
                 }
             }
         }
     }
     return;
-} // computeBrinkmanDiffusionCoefficient
+} // computeDiffusionCoefficient
 
 void
-BrinkmanPenalizationAdvDiff::computeBrinkmanForcing(int F_idx, Pointer<CellVariable<NDIM, double> > Q_var)
+BrinkmanPenalizationAdvDiff::computeForcing(int F_idx, Pointer<CellVariable<NDIM, double> > Q_var)
 {
 #if !defined(NDEBUG)
     TBOX_ASSERT(d_Q_bc.find(Q_var) != d_Q_bc.end());
@@ -520,7 +519,7 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanForcing(int F_idx, Pointer<CellVaria
                     else
                     {
                         // This statement should not be reached
-                        TBOX_ERROR("Error in BrinkmanPenalizationAdvDiff::computeBrinkmanForcing: \n"
+                        TBOX_ERROR("Error in BrinkmanPenalizationAdvDiff::computeForcing: \n"
                                    << "bc_type = " << enum_to_string(bc_type) << "\n");
                     }
                 }
@@ -640,7 +639,7 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanForcing(int F_idx, Pointer<CellVaria
         }
     }
     return;
-} // computeBrinkmanForcing
+} // computeForcing
 
 void
 BrinkmanPenalizationAdvDiff::maskForcingTerm(int N_idx, Pointer<CellVariable<NDIM, double> > Q_var)

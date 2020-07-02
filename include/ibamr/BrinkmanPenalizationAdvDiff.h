@@ -22,6 +22,7 @@
 #include "ibtk/ibtk_utilities.h"
 
 #include "tbox/Database.h"
+#include "tbox/DescribedClass.h"
 #include "tbox/Pointer.h"
 
 #include <limits>
@@ -61,7 +62,7 @@ namespace IBAMR
  * For Neumann BCs, homogeneous BCs are fairly straightforward, while inhomogeneous BCs require
  * some additional input by the user. Add a reference to Sakurai's paper
  */
-class BrinkmanPenalizationAdvDiff
+class BrinkmanPenalizationAdvDiff : public virtual SAMRAI::tbox::DescribedClass
 {
 public:
     /*
@@ -95,7 +96,7 @@ public:
     /*!
      * \brief Set Brinkman penalization penalty factor.
      */
-    void setBrinkmanCoefficient(double eta);
+    void setPenaltyCoefficient(double eta);
 
     /*
      * \brief Get the name of the object.
@@ -108,7 +109,7 @@ public:
     /*
      * \brief Get the Brinkman coefficient.
      */
-    double getBrinkmanCoefficient() const
+    double getPenaltyCoefficient() const
     {
         return d_eta;
     } // getBrinkmanCoefficient
@@ -153,10 +154,10 @@ public:
      */
 
     void
-    registerBrinkmanBoundaryCondition(SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
-                                      SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > ls_solid_var,
-                                      std::string bc_type,
-                                      double bc_val);
+    registerDirichletHomogeneousNeumannBC(SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
+                                          SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > ls_solid_var,
+                                          std::string bc_type,
+                                          double bc_val);
 
     /*
      * \brief Register a transported quantity with this object, along with multiple solid level set
@@ -165,7 +166,7 @@ public:
      * \note This function can only be used to register homogeneous/inhomogeneous Dirichlet BCs, and homogeneous Neumann
      * BCs.
      */
-    void registerBrinkmanBoundaryCondition(
+    void registerDirichletHomogeneousNeumannBC(
         SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
         std::vector<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > > ls_solid_vars,
         std::vector<std::string> bc_types,
@@ -178,11 +179,10 @@ public:
      * \note Inhomogeneous Neumann BCs are treated uniquely within this class and require additional user callback
      * inputs.
      */
-    void registerInhomogeneousNeumannBrinkmanBoundaryCondition(
-        SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
-        SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > ls_solid_var,
-        BrinkmanInhomogeneousNeumannBCsFcnPtr callback,
-        void* ctx);
+    void registerInhomogeneousNeumannBC(SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
+                                        SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > ls_solid_var,
+                                        BrinkmanInhomogeneousNeumannBCsFcnPtr callback,
+                                        void* ctx);
 
     /*
      * \brief Function to compute the cell-centered coefficient to the damping linear operator
@@ -192,9 +192,9 @@ public:
      * For Dirichlet BCs, \f$ C = \lambda + \chi/\eta \f$ where \f$\chi = 1-H\f$.
      * For Neumann BCs, \f$ C = (1 - \chi) \lambda + \f$ where \f$\chi = 1-H\f$.
      */
-    void computeBrinkmanDampingCoefficient(int C_idx,
-                                           SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
-                                           double lambda);
+    void computeDampingCoefficient(int C_idx,
+                                   SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
+                                   double lambda);
 
     /*
      * \brief Function to compute the side-centered coefficient to the diffusion linear operator
@@ -204,10 +204,10 @@ public:
      * For Dirichlet BCs, \f$ D = kappa \f$.
      * For Neumann BCs, \f$ D = (1 - \chi) \kappa + \eta \chi \lambda + \f$ where \f$\chi = 1-H\f$
      */
-    void computeBrinkmanDiffusionCoefficient(int D_idx,
-                                             SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
-                                             int kappa_idx,
-                                             double kappa);
+    void computeDiffusionCoefficient(int D_idx,
+                                     SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
+                                     int kappa_idx,
+                                     double kappa);
 
     /*
      * \brief Function to compute the Brinkman forcing contribution to the RHS of the advection-diffusion solver
@@ -218,7 +218,7 @@ public:
      * For inhomogeneous Neumann BCs, \f$ F = \nabla \dot (\chi B) - \chi \nabla \dot B \f$, with a user defined
      * \f$B\f$.
      */
-    void computeBrinkmanForcing(int F_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
+    void computeForcing(int F_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
 
     /*
      * \brief Function to mask the additional forcing terms on the RHS of the advection-diffusion solver
