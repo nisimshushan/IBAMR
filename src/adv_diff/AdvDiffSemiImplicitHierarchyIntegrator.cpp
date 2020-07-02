@@ -550,10 +550,6 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
         Pointer<CellVariable<NDIM, double> > Q_rhs_var = d_Q_Q_rhs_map[Q_var];
         Pointer<SideVariable<NDIM, double> > D_var = d_Q_diffusion_coef_variable[Q_var];
         Pointer<SideVariable<NDIM, double> > D_rhs_var = d_diffusion_coef_rhs_map[D_var];
-        Pointer<CellVariable<NDIM, double> > Cb_var = d_Q_Cb_map[Q_var];
-        Pointer<CellVariable<NDIM, double> > Cb_rhs_var = d_Q_Cb_rhs_map[Q_var];
-        Pointer<SideVariable<NDIM, double> > Db_var = d_Q_Db_map[Q_var];
-        Pointer<SideVariable<NDIM, double> > Db_rhs_var = d_Q_Db_rhs_map[Q_var];
         TimeSteppingType diffusion_time_stepping_type = d_Q_diffusion_time_stepping_type[Q_var];
         const double lambda = d_Q_damping_coef[Q_var];
         const std::vector<RobinBcCoefStrategy<NDIM>*>& Q_bc_coef = d_Q_bc_coef[Q_var];
@@ -567,68 +563,42 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
         const int D_rhs_scratch_idx =
             (D_rhs_var ? var_db->mapVariableAndContextToIndex(D_rhs_var, getScratchContext()) : -1);
 
+        // Note that when Brinkman penalization is applied, linear operators are reset on a cycle-by-cycle basis
+        // in integrateHierarchy().
         const bool apply_brinkman =
             d_brinkman_penalization && d_brinkman_penalization->hasBrinkmanBoundaryCondition(Q_var);
-        int Cb_current_idx = -1, Cb_scratch_idx = -1, Cb_rhs_scratch_idx = -1;
-        int Db_current_idx = -1, Db_scratch_idx = -1, Db_rhs_scratch_idx = -1;
         if (apply_brinkman)
         {
-            Cb_current_idx = var_db->mapVariableAndContextToIndex(Cb_var, getCurrentContext());
-            Cb_scratch_idx = var_db->mapVariableAndContextToIndex(Cb_var, getScratchContext());
-            Cb_rhs_scratch_idx = var_db->mapVariableAndContextToIndex(Cb_rhs_var, getScratchContext());
-            Db_current_idx = var_db->mapVariableAndContextToIndex(Db_var, getCurrentContext());
-            Db_scratch_idx = var_db->mapVariableAndContextToIndex(Db_var, getScratchContext());
-            Db_rhs_scratch_idx = var_db->mapVariableAndContextToIndex(Db_rhs_var, getScratchContext());
-
-            // Compute the Brinkman penalization contributions to the linear operators and RHS for Q_var
-            d_brinkman_penalization->computeBrinkmanDampingCoefficient(Cb_current_idx, Q_var, lambda);
-            d_brinkman_penalization->computeBrinkmanDiffusionCoefficient(
-                Db_current_idx, Q_var, D_current_idx, d_Q_diffusion_coef[Q_var]);
-        }
-
-        // Setup the problem coefficients for the linear solve for Q(n+1).
-        double K = 0.0;
-        switch (diffusion_time_stepping_type)
-        {
-        case BACKWARD_EULER:
-            K = 1.0;
-            break;
-        case FORWARD_EULER:
-            K = 0.0;
-            break;
-        case TRAPEZOIDAL_RULE:
-            K = 0.5;
-            break;
-        default:
-            TBOX_ERROR(d_object_name << "::integrateHierarchy():\n"
-                                     << "  unsupported diffusion time stepping type: "
-                                     << enum_to_string<TimeSteppingType>(diffusion_time_stepping_type) << " \n"
-                                     << "  valid choices are: BACKWARD_EULER, "
-                                        "FORWARD_EULER, TRAPEZOIDAL_RULE\n");
-        }
-        PoissonSpecifications solver_spec(d_object_name + "::solver_spec::" + Q_var->getName());
-        PoissonSpecifications rhs_op_spec(d_object_name + "::rhs_op_spec::" + Q_var->getName());
-        if (apply_brinkman)
-        {
-            // set 1.0/dt + K*Cb in solver_spec (lambda is included within Cb).
-            d_hier_cc_data_ops->scale(Cb_scratch_idx, K, Cb_current_idx);
-            d_hier_cc_data_ops->addScalar(Cb_scratch_idx, Cb_scratch_idx, 1.0 / dt);
-            solver_spec.setCPatchDataId(Cb_scratch_idx);
-
-            // set 1.0/dt - (1.0-K)*Cb in rhs_op_spec, which is applied to Q later
-            d_hier_cc_data_ops->scale(Cb_rhs_scratch_idx, -(1.0 - K), Cb_current_idx);
-            d_hier_cc_data_ops->addScalar(Cb_rhs_scratch_idx, Cb_rhs_scratch_idx, 1.0 / dt);
-            rhs_op_spec.setCPatchDataId(Cb_rhs_scratch_idx);
-
-            // set -K*Db in solver_spec (kappa is included within Db)
-            d_hier_sc_data_ops->scale(Db_scratch_idx, -K, Db_current_idx);
-            solver_spec.setDPatchDataId(Db_scratch_idx);
-            // set (1.0-K)*Db in rhs_op_spec
-            d_hier_sc_data_ops->scale(Db_rhs_scratch_idx, (1.0 - K), Db_current_idx);
-            rhs_op_spec.setDPatchDataId(Db_rhs_scratch_idx);
+            if (d_enable_logging)
+            {
+                plog << d_object_name << ": "
+                     << "Applying Brinkman penalization for variable number " << l << "\n";
+            }
         }
         else
         {
+            // Setup the problem coefficients for the linear solve for Q(n+1).
+            double K = 0.0;
+            switch (diffusion_time_stepping_type)
+            {
+            case BACKWARD_EULER:
+                K = 1.0;
+                break;
+            case FORWARD_EULER:
+                K = 0.0;
+                break;
+            case TRAPEZOIDAL_RULE:
+                K = 0.5;
+                break;
+            default:
+                TBOX_ERROR(d_object_name << "::integrateHierarchy():\n"
+                                         << "  unsupported diffusion time stepping type: "
+                                         << enum_to_string<TimeSteppingType>(diffusion_time_stepping_type) << " \n"
+                                         << "  valid choices are: BACKWARD_EULER, "
+                                            "FORWARD_EULER, TRAPEZOIDAL_RULE\n");
+            }
+            PoissonSpecifications solver_spec(d_object_name + "::solver_spec::" + Q_var->getName());
+            PoissonSpecifications rhs_op_spec(d_object_name + "::rhs_op_spec::" + Q_var->getName());
             solver_spec.setCConstant(1.0 / dt + K * lambda);
             rhs_op_spec.setCConstant(1.0 / dt - (1.0 - K) * lambda);
 
@@ -647,44 +617,44 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
                 solver_spec.setDConstant(-K * kappa);
                 rhs_op_spec.setDConstant(+(1.0 - K) * kappa);
             }
-        }
 
-        // Initialize the RHS operator and compute the RHS vector.
-        Pointer<LaplaceOperator> helmholtz_rhs_op = d_helmholtz_rhs_ops[l];
-        helmholtz_rhs_op->setPoissonSpecifications(rhs_op_spec);
-        helmholtz_rhs_op->setPhysicalBcCoefs(Q_bc_coef);
-        helmholtz_rhs_op->setHomogeneousBc(false);
-        helmholtz_rhs_op->setSolutionTime(current_time);
-        helmholtz_rhs_op->setTimeInterval(current_time, new_time);
-        if (d_helmholtz_rhs_ops_need_init[l])
-        {
-            if (d_enable_logging)
+            // Initialize the RHS operator and compute the RHS vector.
+            Pointer<LaplaceOperator> helmholtz_rhs_op = d_helmholtz_rhs_ops[l];
+            helmholtz_rhs_op->setPoissonSpecifications(rhs_op_spec);
+            helmholtz_rhs_op->setPhysicalBcCoefs(Q_bc_coef);
+            helmholtz_rhs_op->setHomogeneousBc(false);
+            helmholtz_rhs_op->setSolutionTime(current_time);
+            helmholtz_rhs_op->setTimeInterval(current_time, new_time);
+            if (d_helmholtz_rhs_ops_need_init[l])
             {
-                plog << d_object_name << ": "
-                     << "Initializing Helmholtz RHS operator for variable number " << l << "\n";
+                if (d_enable_logging)
+                {
+                    plog << d_object_name << ": "
+                         << "Initializing Helmholtz RHS operator for variable number " << l << "\n";
+                }
+                helmholtz_rhs_op->initializeOperatorState(*d_sol_vecs[l], *d_rhs_vecs[l]);
+                d_helmholtz_rhs_ops_need_init[l] = false;
             }
-            helmholtz_rhs_op->initializeOperatorState(*d_sol_vecs[l], *d_rhs_vecs[l]);
-            d_helmholtz_rhs_ops_need_init[l] = false;
-        }
-        d_hier_cc_data_ops->copyData(Q_scratch_idx, Q_current_idx, false);
-        helmholtz_rhs_op->apply(*d_sol_vecs[l], *d_rhs_vecs[l]);
+            d_hier_cc_data_ops->copyData(Q_scratch_idx, Q_current_idx, false);
+            helmholtz_rhs_op->apply(*d_sol_vecs[l], *d_rhs_vecs[l]);
 
-        // Initialize the linear solver.
-        Pointer<PoissonSolver> helmholtz_solver = d_helmholtz_solvers[l];
-        helmholtz_solver->setPoissonSpecifications(solver_spec);
-        helmholtz_solver->setPhysicalBcCoefs(Q_bc_coef);
-        helmholtz_solver->setHomogeneousBc(false);
-        helmholtz_solver->setSolutionTime(new_time);
-        helmholtz_solver->setTimeInterval(current_time, new_time);
-        if (d_helmholtz_solvers_need_init[l])
-        {
-            if (d_enable_logging)
+            // Initialize the linear solver.
+            Pointer<PoissonSolver> helmholtz_solver = d_helmholtz_solvers[l];
+            helmholtz_solver->setPoissonSpecifications(solver_spec);
+            helmholtz_solver->setPhysicalBcCoefs(Q_bc_coef);
+            helmholtz_solver->setHomogeneousBc(false);
+            helmholtz_solver->setSolutionTime(new_time);
+            helmholtz_solver->setTimeInterval(current_time, new_time);
+            if (d_helmholtz_solvers_need_init[l])
             {
-                plog << d_object_name << ": "
-                     << "Initializing Helmholtz solvers for variable number " << l << "\n";
+                if (d_enable_logging)
+                {
+                    plog << d_object_name << ": "
+                         << "Initializing Helmholtz solvers for variable number " << l << "\n";
+                }
+                helmholtz_solver->initializeSolverState(*d_sol_vecs[l], *d_rhs_vecs[l]);
+                d_helmholtz_solvers_need_init[l] = false;
             }
-            helmholtz_solver->initializeSolverState(*d_sol_vecs[l], *d_rhs_vecs[l]);
-            d_helmholtz_solvers_need_init[l] = false;
         }
 
         // Account for the convective difference term.
@@ -723,16 +693,16 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
             const int N_old_new_idx = var_db->mapVariableAndContextToIndex(N_old_var, getNewContext());
             d_hier_cc_data_ops->copyData(N_old_new_idx, N_scratch_idx);
 
-            // Mask the convective operator due to Brinkman penalization
-            if (apply_brinkman) d_brinkman_penalization->maskForcingTerm(N_scratch_idx, Q_var);
-
-            if (convective_time_stepping_type == FORWARD_EULER)
+            if (!apply_brinkman)
             {
-                d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -1.0, N_scratch_idx, Q_rhs_scratch_idx);
-            }
-            else if (convective_time_stepping_type == TRAPEZOIDAL_RULE)
-            {
-                d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -0.5, N_scratch_idx, Q_rhs_scratch_idx);
+                if (convective_time_stepping_type == FORWARD_EULER)
+                {
+                    d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -1.0, N_scratch_idx, Q_rhs_scratch_idx);
+                }
+                else if (convective_time_stepping_type == TRAPEZOIDAL_RULE)
+                {
+                    d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -0.5, N_scratch_idx, Q_rhs_scratch_idx);
+                }
             }
         }
 
@@ -773,8 +743,8 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
         Pointer<CellVariable<NDIM, double> > Q_var = *cit;
         Pointer<CellVariable<NDIM, double> > F_var = d_Q_F_map[Q_var];
         Pointer<CellVariable<NDIM, double> > Q_rhs_var = d_Q_Q_rhs_map[Q_var];
-        Pointer<CellVariable<NDIM, double> > Fb_var = d_Q_Fb_map[Q_var];
 
+        const int Q_current_idx = var_db->mapVariableAndContextToIndex(Q_var, getCurrentContext());
         const int Q_scratch_idx = var_db->mapVariableAndContextToIndex(Q_var, getScratchContext());
         const int Q_new_idx = var_db->mapVariableAndContextToIndex(Q_var, getNewContext());
         const int F_scratch_idx =
@@ -782,12 +752,117 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
         const int F_new_idx = d_F_fcn[F_var] ? var_db->mapVariableAndContextToIndex(F_var, getNewContext()) : -1;
         const int Q_rhs_scratch_idx = var_db->mapVariableAndContextToIndex(Q_rhs_var, getScratchContext());
 
+        // Get Brinkman penalization variables and data indices if necessary
+        int Fb_scratch_idx = -1;
         const bool apply_brinkman =
             d_brinkman_penalization && d_brinkman_penalization->hasBrinkmanBoundaryCondition(Q_var);
-        int Fb_scratch_idx = -1;
         if (apply_brinkman)
         {
+            TimeSteppingType diffusion_time_stepping_type = d_Q_diffusion_time_stepping_type[Q_var];
+            const double lambda = d_Q_damping_coef[Q_var];
+            const std::vector<RobinBcCoefStrategy<NDIM>*>& Q_bc_coef = d_Q_bc_coef[Q_var];
+            Pointer<SideVariable<NDIM, double> > D_var = d_Q_diffusion_coef_variable[Q_var];
+            Pointer<CellVariable<NDIM, double> > Cb_var = d_Q_Cb_map[Q_var];
+            Pointer<CellVariable<NDIM, double> > Cb_rhs_var = d_Q_Cb_rhs_map[Q_var];
+            Pointer<SideVariable<NDIM, double> > Db_var = d_Q_Db_map[Q_var];
+            Pointer<SideVariable<NDIM, double> > Db_rhs_var = d_Q_Db_rhs_map[Q_var];
+            Pointer<CellVariable<NDIM, double> > Fb_var = d_Q_Fb_map[Q_var];
+            int Cb_current_idx = -1, Cb_scratch_idx = -1, Cb_rhs_scratch_idx = -1;
+            int Db_current_idx = -1, Db_scratch_idx = -1, Db_rhs_scratch_idx = -1;
+
+            const int D_current_idx = (D_var ? var_db->mapVariableAndContextToIndex(D_var, getCurrentContext()) : -1);
+            Cb_current_idx = var_db->mapVariableAndContextToIndex(Cb_var, getCurrentContext());
+            Cb_scratch_idx = var_db->mapVariableAndContextToIndex(Cb_var, getScratchContext());
+            Cb_rhs_scratch_idx = var_db->mapVariableAndContextToIndex(Cb_rhs_var, getScratchContext());
+            Db_current_idx = var_db->mapVariableAndContextToIndex(Db_var, getCurrentContext());
+            Db_scratch_idx = var_db->mapVariableAndContextToIndex(Db_var, getScratchContext());
+            Db_rhs_scratch_idx = var_db->mapVariableAndContextToIndex(Db_rhs_var, getScratchContext());
             Fb_scratch_idx = var_db->mapVariableAndContextToIndex(Fb_var, getScratchContext());
+
+            // Compute the Brinkman penalization contributions to the linear operators and RHS for Q_var
+            d_brinkman_penalization->computeBrinkmanDampingCoefficient(Cb_current_idx, Q_var, lambda);
+            d_brinkman_penalization->computeBrinkmanDiffusionCoefficient(
+                Db_current_idx, Q_var, D_current_idx, d_Q_diffusion_coef[Q_var]);
+
+            // Setup the problem coefficients for the linear solve
+            double K = 0.0;
+            switch (diffusion_time_stepping_type)
+            {
+            case BACKWARD_EULER:
+                K = 1.0;
+                break;
+            case FORWARD_EULER:
+                K = 0.0;
+                break;
+            case TRAPEZOIDAL_RULE:
+                K = 0.5;
+                break;
+            default:
+                TBOX_ERROR(d_object_name << "::integrateHierarchy():\n"
+                                         << "  unsupported diffusion time stepping type: "
+                                         << enum_to_string<TimeSteppingType>(diffusion_time_stepping_type) << " \n"
+                                         << "  valid choices are: BACKWARD_EULER, "
+                                            "FORWARD_EULER, TRAPEZOIDAL_RULE\n");
+            }
+            PoissonSpecifications solver_spec(d_object_name + "::solver_spec::" + Q_var->getName());
+            PoissonSpecifications rhs_op_spec(d_object_name + "::rhs_op_spec::" + Q_var->getName());
+
+            // set 1.0/dt + K*Cb in solver_spec (lambda is included within Cb).
+            d_hier_cc_data_ops->scale(Cb_scratch_idx, K, Cb_current_idx);
+            d_hier_cc_data_ops->addScalar(Cb_scratch_idx, Cb_scratch_idx, 1.0 / dt);
+            solver_spec.setCPatchDataId(Cb_scratch_idx);
+
+            // set 1.0/dt - (1.0-K)*Cb in rhs_op_spec, which is applied to Q later
+            d_hier_cc_data_ops->scale(Cb_rhs_scratch_idx, -(1.0 - K), Cb_current_idx);
+            d_hier_cc_data_ops->addScalar(Cb_rhs_scratch_idx, Cb_rhs_scratch_idx, 1.0 / dt);
+            rhs_op_spec.setCPatchDataId(Cb_rhs_scratch_idx);
+
+            // set -K*Db in solver_spec (kappa is included within Db)
+            d_hier_sc_data_ops->scale(Db_scratch_idx, -K, Db_current_idx);
+            solver_spec.setDPatchDataId(Db_scratch_idx);
+            // set (1.0-K)*Db in rhs_op_spec
+            d_hier_sc_data_ops->scale(Db_rhs_scratch_idx, (1.0 - K), Db_current_idx);
+            rhs_op_spec.setDPatchDataId(Db_rhs_scratch_idx);
+
+            // Initialize the RHS operator and compute the RHS vector.
+            Pointer<LaplaceOperator> helmholtz_rhs_op = d_helmholtz_rhs_ops[l];
+            helmholtz_rhs_op->setPoissonSpecifications(rhs_op_spec);
+            helmholtz_rhs_op->setPhysicalBcCoefs(Q_bc_coef);
+            helmholtz_rhs_op->setHomogeneousBc(false);
+            helmholtz_rhs_op->setSolutionTime(current_time);
+            helmholtz_rhs_op->setTimeInterval(current_time, new_time);
+
+            if (d_helmholtz_rhs_ops_need_init[l]) // TODO: Does this need to happen every cycle?
+            {
+                if (d_enable_logging)
+                {
+                    plog << d_object_name << ": "
+                         << "Initializing Helmholtz RHS operator for variable number " << l << "\n";
+                }
+                helmholtz_rhs_op->initializeOperatorState(*d_sol_vecs[l], *d_rhs_vecs[l]);
+                d_helmholtz_rhs_ops_need_init[l] = false;
+            }
+            d_hier_cc_data_ops->copyData(Q_scratch_idx, Q_current_idx, false);
+            helmholtz_rhs_op->apply(*d_sol_vecs[l], *d_rhs_vecs[l]);
+
+            // Initialize the linear solver.
+            Pointer<PoissonSolver> helmholtz_solver = d_helmholtz_solvers[l];
+            helmholtz_solver->setPoissonSpecifications(solver_spec);
+            helmholtz_solver->setPhysicalBcCoefs(Q_bc_coef);
+            helmholtz_solver->setHomogeneousBc(false);
+            helmholtz_solver->setSolutionTime(new_time);
+            helmholtz_solver->setTimeInterval(current_time, new_time);
+
+            if (d_helmholtz_solvers_need_init[l]) // TODO: Does this need to happen every cycle?
+            {
+                if (d_enable_logging)
+                {
+                    plog << d_object_name << ": "
+                         << "Initializing Helmholtz solvers for variable number " << l << "\n";
+                }
+                helmholtz_solver->initializeSolverState(*d_sol_vecs[l], *d_rhs_vecs[l]);
+                d_helmholtz_solvers_need_init[l] = false;
+            }
         }
 
         // Update the advection velocity.
@@ -809,10 +884,10 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
         // Account for the convective difference term.
         Pointer<FaceVariable<NDIM, double> > u_var = d_Q_u_map[Q_var];
         Pointer<CellVariable<NDIM, double> > N_var = d_Q_N_map[Q_var];
+        Pointer<CellVariable<NDIM, double> > N_old_var = d_Q_N_old_map[Q_var];
         TimeSteppingType convective_time_stepping_type = UNKNOWN_TIME_STEPPING_TYPE;
         if (u_var)
         {
-            Pointer<CellVariable<NDIM, double> > N_old_var = d_Q_N_old_map[Q_var];
             convective_time_stepping_type = d_Q_convective_time_stepping_type[Q_var];
             if (is_multistep_time_stepping_type(convective_time_stepping_type))
             {
@@ -841,6 +916,24 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
                     });
                 }
             }
+            // Account for masked convective operator for Brinkman penalization
+            if (apply_brinkman)
+            {
+                const int N_old_new_idx = var_db->mapVariableAndContextToIndex(N_old_var, getNewContext());
+                const int N_old_scratch_idx = var_db->mapVariableAndContextToIndex(N_old_var, getScratchContext());
+                d_hier_cc_data_ops->copyData(N_old_scratch_idx, N_old_new_idx);
+                d_brinkman_penalization->maskForcingTerm(N_old_scratch_idx, Q_var);
+
+                if (convective_time_stepping_type == FORWARD_EULER)
+                {
+                    d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -1.0, N_old_scratch_idx, Q_rhs_scratch_idx);
+                }
+                else if (convective_time_stepping_type == TRAPEZOIDAL_RULE)
+                {
+                    d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, -0.5, N_old_scratch_idx, Q_rhs_scratch_idx);
+                }
+            }
+
             const int N_scratch_idx = var_db->mapVariableAndContextToIndex(N_var, getScratchContext());
             if (cycle_num > 0)
             {
@@ -908,7 +1001,7 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
             d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, 1.0, Fb_scratch_idx, Q_rhs_scratch_idx);
         }
 
-        if (isDiffusionCoefficientVariable(Q_var) || (d_Q_diffusion_coef[Q_var] != 0.0))
+        if (isDiffusionCoefficientVariable(Q_var) || (d_Q_diffusion_coef[Q_var] != 0.0) || apply_brinkman)
         {
             // Solve for Q(n+1).
             Pointer<PoissonSolver> helmholtz_solver = d_helmholtz_solvers[l];
@@ -936,6 +1029,18 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
         // Reset the right-hand side vector.
         if (u_var)
         {
+            if (apply_brinkman)
+            {
+                const int N_old_scratch_idx = var_db->mapVariableAndContextToIndex(N_old_var, getScratchContext());
+                if (convective_time_stepping_type == FORWARD_EULER)
+                {
+                    d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, +1.0, N_old_scratch_idx, Q_rhs_scratch_idx);
+                }
+                else if (convective_time_stepping_type == TRAPEZOIDAL_RULE)
+                {
+                    d_hier_cc_data_ops->axpy(Q_rhs_scratch_idx, +0.5, N_old_scratch_idx, Q_rhs_scratch_idx);
+                }
+            }
             const int N_scratch_idx = var_db->mapVariableAndContextToIndex(N_var, getScratchContext());
             if (convective_time_stepping_type == ADAMS_BASHFORTH || convective_time_stepping_type == MIDPOINT_RULE)
             {

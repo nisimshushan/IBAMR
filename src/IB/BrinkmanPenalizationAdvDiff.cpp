@@ -272,7 +272,7 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanDampingCoefficient(int C_idx,
 
         // Get the solid level set info
         VariableDatabase<NDIM>* var_db = VariableDatabase<NDIM>::getDatabase();
-        const int phi_idx = var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getCurrentContext());
+        const int phi_idx = var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getNewContext());
 
         Pointer<PatchHierarchy<NDIM> > patch_hierarchy = d_adv_diff_solver->getPatchHierarchy();
         const int coarsest_ln = 0;
@@ -349,7 +349,7 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanDiffusionCoefficient(int D_idx,
 
         // Get the solid level set info
         VariableDatabase<NDIM>* var_db = VariableDatabase<NDIM>::getDatabase();
-        const int phi_idx = var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getCurrentContext());
+        const int phi_idx = var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getNewContext());
         const int phi_scratch_idx =
             var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getScratchContext());
 
@@ -470,8 +470,7 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanForcing(int F_idx, Pointer<CellVaria
         {
             // Get the solid level set info
             VariableDatabase<NDIM>* var_db = VariableDatabase<NDIM>::getDatabase();
-            const int phi_idx =
-                var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getCurrentContext());
+            const int phi_idx = var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getNewContext());
 
             for (int ln = coarsest_ln; ln <= finest_ln; ++ln)
             {
@@ -537,8 +536,7 @@ BrinkmanPenalizationAdvDiff::computeBrinkmanForcing(int F_idx, Pointer<CellVaria
 
             // Compute chi*B throughout the hierarchy
             VariableDatabase<NDIM>* var_db = VariableDatabase<NDIM>::getDatabase();
-            const int phi_idx =
-                var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getCurrentContext());
+            const int phi_idx = var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getNewContext());
             const int phi_scratch_idx =
                 var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getScratchContext());
 
