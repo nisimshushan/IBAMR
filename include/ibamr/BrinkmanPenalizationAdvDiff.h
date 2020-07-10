@@ -186,23 +186,27 @@ public:
 
     /*
      * \brief Function to compute the cell-centered coefficient to the damping linear operator
-     * and RHS of the advection-diffusion equation for a specified transported quantity Q_var with damping
-     * coefficient lambda.
+     * and RHS of the advection-diffusion equation for a specified transported quantity Q_var
      *
-     * For Dirichlet BCs, \f$ C = \lambda + \chi/\eta \f$ where \f$\chi = 1-H\f$.
-     * For Neumann BCs, \f$ C = (1 - \chi) \lambda + \f$ where \f$\chi = 1-H\f$.
+     * \note It it assumed that the physical damping coefficient \f$\lambda\f$ is zero.
+     *
+     * The functional form of the Brinkman damping coefficient is
+     * \f$ C = \sum_{Dirichlet} \chi_i/\eta \f$ where \f$\chi_i = 1-H_i\f$ and the sum is taken over all level sets with
+     * Dirichlet BCs. Note that Neumann BCs do not contribute anything to this term.
+     *
      */
-    void computeDampingCoefficient(int C_idx,
-                                   SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
-                                   double lambda);
+    void computeDampingCoefficient(int C_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
 
     /*
      * \brief Function to compute the side-centered coefficient to the diffusion linear operator
      * and RHS of the advection-diffusion equation for a specified transported quantity Q_var with diffusion
-     * coefficient kappa. Note that this function is able to handle both constant and variable kappa.
+     * coefficient kappa.
      *
-     * For Dirichlet BCs, \f$ D = kappa \f$.
-     * For Neumann BCs, \f$ D = (1 - \chi) \kappa + \eta \chi \lambda + \f$ where \f$\chi = 1-H\f$
+     * \note This function is able to handle both constant and variable kappa.
+     *
+     * The functional form of the Brinkman diffusion coefficient is
+     * \f$ D = \kappa + \sum_{Neumann} (-\chi_i + \eta \chi_i)\f$ where \f$\chi_i = 1-H_i\f$ and the sum is taken over
+     * all level sets with Neumann BCs. Note that Dirichlet BCs do not contribute anything to this term.
      */
     void computeDiffusionCoefficient(int D_idx,
                                      SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
@@ -213,10 +217,11 @@ public:
      * \brief Function to compute the Brinkman forcing contribution to the RHS of the advection-diffusion solver
      * for a specified transported quantity Q_var.
      *
-     * For Dirichlet BCs, \f$ F = \chi/\eta Q_{bc}\f$ where \f$\chi = 1-H\f$.
-     * For homogeneous Neumann BCs, \f$ F = 0\f$.
-     * For inhomogeneous Neumann BCs, \f$ F = \nabla \dot (\chi B) - \chi \nabla \dot B \f$, with a user defined
-     * \f$B\f$.
+     * For Dirichlet BCs, \f$ F_i = \chi_i/\eta Q_{bc}\f$ where \f$\chi_i = 1-H_i\f$.
+     * For homogeneous Neumann BCs, \f$ F_i = 0\f$.
+     * For inhomogeneous Neumann BCs, \f$ F_i = \nabla \dot (\chi_i B) - \chi_i \nabla \dot B_i \f$, with a user defined
+     * \f$B_i\f$.
+     * The overall functional form of the Brinkman body force is \f$F = \sum_{i} F_i\f$.
      */
     void computeForcing(int F_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
 
@@ -224,8 +229,9 @@ public:
      * \brief Function to mask the additional forcing terms on the RHS of the advection-diffusion solver
      * e.g. \f$ u \dot \grad Q\f$ and body forces.
      *
-     * For Dirichlet BCs, no masking function is applied.
-     * For Neumann BCs, \f$ N = (1-\chi) N\f$ where \f$\chi = 1-H\f$.
+     * The functional form of the Brinkman masking term is
+     * \f$ N = (1-\sum_{Neumann} \chi_i) N\f$ where \f$\chi_i = 1-H_i\f$ and the sum is taken over all level sets
+     * with Neumann BCs. Note that Dirichlet BCs do not mask this term presently.
      */
     void maskForcingTerm(int N_idx, SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var);
 

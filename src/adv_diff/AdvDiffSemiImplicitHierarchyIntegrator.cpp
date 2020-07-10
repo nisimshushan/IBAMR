@@ -569,6 +569,12 @@ AdvDiffSemiImplicitHierarchyIntegrator::preprocessIntegrateHierarchy(const doubl
             d_brinkman_penalization && d_brinkman_penalization->hasBrinkmanBoundaryCondition(Q_var);
         if (apply_brinkman)
         {
+            if (lambda != 0.0)
+            {
+                TBOX_ERROR(d_object_name
+                           << "::preprocessIntegrateHierarchy():\n"
+                           << "  physical damping coefficient lambda must be 0.0 to apply Brinkman penalization BCs\n");
+            }
             if (d_enable_logging)
             {
                 plog << d_object_name << ": "
@@ -758,8 +764,10 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
             d_brinkman_penalization && d_brinkman_penalization->hasBrinkmanBoundaryCondition(Q_var);
         if (apply_brinkman)
         {
+#if !defined(NDEBUG)
+            TBOX_ASSERT(d_Q_damping_coef[Q_var] == 0.0);
+#endif
             TimeSteppingType diffusion_time_stepping_type = d_Q_diffusion_time_stepping_type[Q_var];
-            const double lambda = d_Q_damping_coef[Q_var];
             const std::vector<RobinBcCoefStrategy<NDIM>*>& Q_bc_coef = d_Q_bc_coef[Q_var];
             Pointer<SideVariable<NDIM, double> > D_var = d_Q_diffusion_coef_variable[Q_var];
             Pointer<CellVariable<NDIM, double> > Cb_var = d_Q_Cb_map[Q_var];
@@ -780,7 +788,7 @@ AdvDiffSemiImplicitHierarchyIntegrator::integrateHierarchy(const double current_
             Fb_scratch_idx = var_db->mapVariableAndContextToIndex(Fb_var, getScratchContext());
 
             // Compute the Brinkman penalization contributions to the linear operators and RHS for Q_var
-            d_brinkman_penalization->computeDampingCoefficient(Cb_current_idx, Q_var, lambda);
+            d_brinkman_penalization->computeDampingCoefficient(Cb_current_idx, Q_var);
             d_brinkman_penalization->computeDiffusionCoefficient(
                 Db_current_idx, Q_var, D_current_idx, d_Q_diffusion_coef[Q_var]);
 
