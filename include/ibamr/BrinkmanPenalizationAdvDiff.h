@@ -94,9 +94,14 @@ public:
     void postprocessBrinkmanPenalizationAdvDiff(double current_time, double new_time, int num_cycles);
 
     /*!
-     * \brief Set Brinkman penalization penalty factor.
+     * \brief Set Brinkman penalization penalty factor for all level sets.
      */
-    void setPenaltyCoefficient(double eta);
+    void setPenaltyCoefficient(double eta_penalty_coef);
+
+    /*!
+     * \brief Set the number of interface cells for all level sets.
+     */
+    void setNumInterfaceCells(double num_interface_cells);
 
     /*
      * \brief Get the name of the object.
@@ -105,14 +110,6 @@ public:
     {
         return d_object_name;
     } // getName
-
-    /*
-     * \brief Get the Brinkman coefficient.
-     */
-    double getPenaltyCoefficient() const
-    {
-        return d_eta;
-    } // getBrinkmanCoefficient
 
     /*
      * \brief Get the current time interval \f$ [t^{n+1}, t^n] \f$ in which Brinkman
@@ -157,20 +154,9 @@ public:
     registerDirichletHomogeneousNeumannBC(SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
                                           SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > ls_solid_var,
                                           std::string bc_type,
-                                          double bc_val);
-
-    /*
-     * \brief Register a transported quantity with this object, along with multiple solid level set
-     * variables for which to apply a specified boundary condition.
-     *
-     * \note This function can only be used to register homogeneous/inhomogeneous Dirichlet BCs, and homogeneous Neumann
-     * BCs.
-     */
-    void registerDirichletHomogeneousNeumannBC(
-        SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
-        std::vector<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > > ls_solid_vars,
-        std::vector<std::string> bc_types,
-        std::vector<double> bc_vals);
+                                          double bc_val,
+                                          double num_interface_cells = 2.0,
+                                          double eta_penalty_coef = 1.0e-4);
 
     /*
      * \brief Register a transported quantity with this object, along with the solid level set variable
@@ -182,7 +168,9 @@ public:
     void registerInhomogeneousNeumannBC(SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > Q_var,
                                         SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > ls_solid_var,
                                         BrinkmanInhomogeneousNeumannBCsFcnPtr callback,
-                                        void* ctx);
+                                        void* ctx,
+                                        double num_interface_cells = 2.0,
+                                        double eta_penalty_coef = 1.0e-4);
 
     /*
      * \brief Function to compute the cell-centered coefficient to the damping linear operator
@@ -257,6 +245,20 @@ private:
     BrinkmanPenalizationAdvDiff& operator=(const BrinkmanPenalizationAdvDiff& that) = delete;
 
     /*
+     * Struct to maintain the properties a particular boundary condition
+     */
+    struct BCProperties
+    {
+        SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> > ls_solid_var;
+        AdvDiffBrinkmanPenalizationBcType bc_type;
+        double bc_val;
+        double num_interface_cells;
+        double eta;
+        BrinkmanInhomogeneousNeumannBCsFcnPtr callback;
+        void* ctx;
+    };
+
+    /*
      * Object name.
      */
     std::string d_object_name;
@@ -273,20 +275,9 @@ private:
            d_new_time = std::numeric_limits<double>::quiet_NaN();
 
     /*
-     * Brinkman coefficient.
-     */
-    double d_eta = 1e-4;
-
-    /*
      * Map for storing transported variables and various registered BCs
      */
-    std::map<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> >,
-             std::vector<std::tuple<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> >,
-                                    AdvDiffBrinkmanPenalizationBcType,
-                                    double,
-                                    BrinkmanInhomogeneousNeumannBCsFcnPtr,
-                                    void*> > >
-        d_Q_bc;
+    std::map<SAMRAI::tbox::Pointer<SAMRAI::pdat::CellVariable<NDIM, double> >, std::vector<BCProperties> > d_Q_bc;
 
     /*
      * Patch data required for computing additional forcing for inhomogeneous Neumann BCs

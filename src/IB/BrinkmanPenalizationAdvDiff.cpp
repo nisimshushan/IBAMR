@@ -139,22 +139,50 @@ BrinkmanPenalizationAdvDiff::postprocessBrinkmanPenalizationAdvDiff(double /*cur
 } // postprocessBrinkmanPenalizationAdvDiff
 
 void
-BrinkmanPenalizationAdvDiff::setPenaltyCoefficient(double eta)
+BrinkmanPenalizationAdvDiff::setPenaltyCoefficient(double eta_penalty_coef)
 {
-    // TODO: Allow for flexibility in setting eta for different Q and level sets?
-    d_eta = eta;
+#if !defined(NDEBUG)
+    TBOX_ASSERT(eta_penalty_coef > 0);
+#endif
+    for (auto& e : d_Q_bc)
+    {
+        for (auto& bc_prop : e.second)
+        {
+            bc_prop.eta = eta_penalty_coef;
+        }
+    }
     return;
 } // setPenaltyCoefficient
+
+void
+BrinkmanPenalizationAdvDiff::setNumInterfaceCells(double num_interface_cells)
+{
+#if !defined(NDEBUG)
+    TBOX_ASSERT(num_interface_cells > 0);
+#endif
+    for (auto& e : d_Q_bc)
+    {
+        for (auto& bc_prop : e.second)
+        {
+            bc_prop.num_interface_cells = num_interface_cells;
+        }
+    }
+    return;
+} // setNumInterfaceCells
 
 void
 BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC(Pointer<CellVariable<NDIM, double> > Q_var,
                                                                    Pointer<CellVariable<NDIM, double> > ls_solid_var,
                                                                    std::string bc_type,
-                                                                   double bc_val)
+                                                                   double bc_val,
+                                                                   double num_interface_cells,
+                                                                   double eta_penalty_coef)
 {
 #if !defined(NDEBUG)
     TBOX_ASSERT(Q_var);
     TBOX_ASSERT(ls_solid_var);
+    TBOX_ASSERT(num_interface_cells > 0);
+    TBOX_ASSERT(eta_penalty_coef > 0);
 #endif
     auto bc_type_enum = string_to_enum<AdvDiffBrinkmanPenalizationBcType>(bc_type);
     if (bc_type_enum != DIRICHLET && bc_type_enum != NEUMANN)
@@ -179,9 +207,9 @@ BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC(Pointer<CellV
         // Ensuring that a solid level set is only registered with each transported quantity once
         if (e.first == Q_var)
         {
-            for (const auto& tup : e.second)
+            for (const auto& bc_prop : e.second)
             {
-                if (std::get<0>(tup) == ls_solid_var)
+                if (bc_prop.ls_solid_var == ls_solid_var)
                 {
                     TBOX_ERROR("BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC\n"
                                << "  two separate boundary conditions on level set variable " << ls_solid_var->getName()
@@ -195,23 +223,18 @@ BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC(Pointer<CellV
     // No user supplied callbacks are needed
     BrinkmanInhomogeneousNeumannBCsFcnPtr callback = nullptr;
     void* ctx = nullptr;
-    auto bc_tuple = std::make_tuple(ls_solid_var, bc_type_enum, bc_val, callback, ctx);
-    d_Q_bc[Q_var].push_back(bc_tuple);
-    return;
-} // registerDirichletHomogeneousNeumannBC
 
-void
-BrinkmanPenalizationAdvDiff::registerDirichletHomogeneousNeumannBC(
-    Pointer<CellVariable<NDIM, double> > Q_var,
-    std::vector<Pointer<CellVariable<NDIM, double> > > ls_solid_vars,
-    std::vector<string> bc_types,
-    std::vector<double> bc_vals)
-{
-    TBOX_ASSERT(ls_solid_vars.size() == bc_types.size() == bc_vals.size());
-    for (int i = 0; i < ls_solid_vars.size(); ++i)
-    {
-        registerDirichletHomogeneousNeumannBC(Q_var, ls_solid_vars[i], bc_types[i], bc_vals[i]);
-    }
+    // Store BC properties in a struct
+    BCProperties bc_prop;
+    bc_prop.ls_solid_var = ls_solid_var;
+    bc_prop.bc_type = bc_type_enum;
+    bc_prop.bc_val = bc_val;
+    bc_prop.num_interface_cells = num_interface_cells;
+    bc_prop.eta = eta_penalty_coef;
+    bc_prop.callback = callback;
+    bc_prop.ctx = ctx;
+    d_Q_bc[Q_var].push_back(bc_prop);
+
     return;
 } // registerDirichletHomogeneousNeumannBC
 
@@ -219,13 +242,17 @@ void
 BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBC(Pointer<CellVariable<NDIM, double> > Q_var,
                                                             Pointer<CellVariable<NDIM, double> > ls_solid_var,
                                                             BrinkmanInhomogeneousNeumannBCsFcnPtr callback,
-                                                            void* ctx)
+                                                            void* ctx,
+                                                            double num_interface_cells,
+                                                            double eta_penalty_coef)
 {
 #if !defined(NDEBUG)
     TBOX_ASSERT(Q_var);
     TBOX_ASSERT(ls_solid_var);
     TBOX_ASSERT(callback);
     TBOX_ASSERT(ctx);
+    TBOX_ASSERT(num_interface_cells > 0);
+    TBOX_ASSERT(eta_penalty_coef > 0);
 #endif
     // Store BC options within the map
     for (const auto& e : d_Q_bc)
@@ -233,9 +260,9 @@ BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBC(Pointer<CellVariable
         // Ensuring that a solid level set is only registered with each transported quantity once
         if (e.first == Q_var)
         {
-            for (const auto& tup : e.second)
+            for (const auto& bc_prop : e.second)
             {
-                if (std::get<0>(tup) == ls_solid_var)
+                if (bc_prop.ls_solid_var == ls_solid_var)
                 {
                     TBOX_ERROR("BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBC\n"
                                << "  two separate boundary conditions on level set variable " << ls_solid_var->getName()
@@ -249,8 +276,18 @@ BrinkmanPenalizationAdvDiff::registerInhomogeneousNeumannBC(Pointer<CellVariable
     // Specifying a dummy nonzero value for bc_val since this input value will not be used for inhomogeneous Neumann BCs
     auto bc_type_enum = string_to_enum<AdvDiffBrinkmanPenalizationBcType>("NEUMANN");
     double bc_val = std::numeric_limits<double>::max();
-    auto bc_tuple = std::make_tuple(ls_solid_var, bc_type_enum, bc_val, callback, ctx);
-    d_Q_bc[Q_var].push_back(bc_tuple);
+
+    // Store BC properties in a struct
+    BCProperties bc_prop;
+    bc_prop.ls_solid_var = ls_solid_var;
+    bc_prop.bc_type = bc_type_enum;
+    bc_prop.bc_val = bc_val;
+    bc_prop.num_interface_cells = num_interface_cells;
+    bc_prop.eta = eta_penalty_coef;
+    bc_prop.callback = callback;
+    bc_prop.ctx = ctx;
+    d_Q_bc[Q_var].push_back(bc_prop);
+
     return;
 } // registerInhomogeneousNeumannBC
 
@@ -275,7 +312,8 @@ BrinkmanPenalizationAdvDiff::computeDampingCoefficient(int C_idx, Pointer<CellVa
             const Pointer<CartesianPatchGeometry<NDIM> > patch_geom = patch->getPatchGeometry();
             const Box<NDIM>& patch_box = patch->getBox();
             const double* patch_dx = patch_geom->getDx();
-            const double alpha = 2.0 * patch_dx[0]; // TODO: More general expression for width?
+            double vol_cell = 1.0;
+            for (int d = 0; d < NDIM; ++d) vol_cell *= patch_dx[d];
 
             Pointer<CellData<NDIM, double> > C_data = patch->getPatchData(C_idx);
             for (Box<NDIM>::Iterator it(patch_box); it; it++)
@@ -285,11 +323,14 @@ BrinkmanPenalizationAdvDiff::computeDampingCoefficient(int C_idx, Pointer<CellVa
                 // Loop over all the level sets and add up their contributions
                 // TODO: Pointwise check that level sets don't overlap
                 double brinkman_coef = 0.0;
-                for (const auto& bc_tup : brinkman_zones)
+                for (const auto& bc_prop : brinkman_zones)
                 {
                     // Get the BC specifications for each zone
-                    Pointer<CellVariable<NDIM, double> > ls_solid_var = std::get<0>(bc_tup);
-                    AdvDiffBrinkmanPenalizationBcType bc_type = std::get<1>(bc_tup);
+                    Pointer<CellVariable<NDIM, double> > ls_solid_var = bc_prop.ls_solid_var;
+                    AdvDiffBrinkmanPenalizationBcType bc_type = bc_prop.bc_type;
+                    double eta = bc_prop.eta;
+                    double num_interface_cells = bc_prop.num_interface_cells;
+                    const double alpha = num_interface_cells * std::pow(vol_cell, 1.0 / static_cast<double>(NDIM));
 #if !defined(NDEBUG)
                     TBOX_ASSERT(bc_type == DIRICHLET || bc_type == NEUMANN);
 #endif
@@ -316,7 +357,7 @@ BrinkmanPenalizationAdvDiff::computeDampingCoefficient(int C_idx, Pointer<CellVa
                     // Neumann BCs have no contribution to the damping coefficient
                     if (bc_type == DIRICHLET)
                     {
-                        brinkman_coef += (chi / d_eta);
+                        brinkman_coef += (chi / eta);
                     }
                 }
 
@@ -347,8 +388,8 @@ BrinkmanPenalizationAdvDiff::computeDiffusionCoefficient(int D_idx,
     std::vector<InterpolationTransactionComponent> phi_transaction_comps(brinkman_zones.size());
     for (int i = 0; i < brinkman_zones.size(); ++i)
     {
-        auto bc_tup = brinkman_zones[i];
-        Pointer<CellVariable<NDIM, double> > ls_solid_var = std::get<0>(bc_tup);
+        auto bc_prop = brinkman_zones[i];
+        Pointer<CellVariable<NDIM, double> > ls_solid_var = bc_prop.ls_solid_var;
         const int phi_idx = var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getNewContext());
         const int phi_scratch_idx =
             var_db->mapVariableAndContextToIndex(ls_solid_var, d_adv_diff_solver->getScratchContext());
@@ -377,7 +418,8 @@ BrinkmanPenalizationAdvDiff::computeDiffusionCoefficient(int D_idx,
             const Pointer<CartesianPatchGeometry<NDIM> > patch_geom = patch->getPatchGeometry();
             const Box<NDIM>& patch_box = patch->getBox();
             const double* patch_dx = patch_geom->getDx();
-            const double alpha = 2.0 * patch_dx[0]; // TODO: More general expression for width?
+            double vol_cell = 1.0;
+            for (int d = 0; d < NDIM; ++d) vol_cell *= patch_dx[d];
 
             Pointer<SideData<NDIM, double> > D_data = patch->getPatchData(D_idx);
             Pointer<SideData<NDIM, double> > kappa_data = variable_kappa ? patch->getPatchData(kappa_idx) : nullptr;
@@ -391,11 +433,14 @@ BrinkmanPenalizationAdvDiff::computeDiffusionCoefficient(int D_idx,
                     // TODO: Pointwise check that level sets don't overlap
                     const double kp = variable_kappa ? (*kappa_data)(s_i) : kappa;
                     double brinkman_coef = kp;
-                    for (const auto& bc_tup : brinkman_zones)
+                    for (const auto& bc_prop : brinkman_zones)
                     {
                         // Get the BC specifications for each zone
-                        Pointer<CellVariable<NDIM, double> > ls_solid_var = std::get<0>(bc_tup);
-                        AdvDiffBrinkmanPenalizationBcType bc_type = std::get<1>(bc_tup);
+                        Pointer<CellVariable<NDIM, double> > ls_solid_var = bc_prop.ls_solid_var;
+                        AdvDiffBrinkmanPenalizationBcType bc_type = bc_prop.bc_type;
+                        double eta = bc_prop.eta;
+                        double num_interface_cells = bc_prop.num_interface_cells;
+                        const double alpha = num_interface_cells * std::pow(vol_cell, 1.0 / static_cast<double>(NDIM));
 #if !defined(NDEBUG)
                         TBOX_ASSERT(bc_type == DIRICHLET || bc_type == NEUMANN);
 #endif
@@ -425,7 +470,7 @@ BrinkmanPenalizationAdvDiff::computeDiffusionCoefficient(int D_idx,
                         // Dirichlet BCs have no contribution to the diffusion coefficient
                         if (bc_type == NEUMANN)
                         {
-                            brinkman_coef += (-kp * chi) + (d_eta * chi);
+                            brinkman_coef += (-kp * chi) + (eta * chi);
                         }
                     }
 
@@ -461,7 +506,8 @@ BrinkmanPenalizationAdvDiff::computeForcing(int F_idx, Pointer<CellVariable<NDIM
             const Pointer<CartesianPatchGeometry<NDIM> > patch_geom = patch->getPatchGeometry();
             const Box<NDIM>& patch_box = patch->getBox();
             const double* patch_dx = patch_geom->getDx();
-            const double alpha = 2.0 * patch_dx[0]; // TODO: More general expression for width?
+            double vol_cell = 1.0;
+            for (int d = 0; d < NDIM; ++d) vol_cell *= patch_dx[d];
 
             Pointer<CellData<NDIM, double> > F_data = patch->getPatchData(F_idx);
 
@@ -472,13 +518,16 @@ BrinkmanPenalizationAdvDiff::computeForcing(int F_idx, Pointer<CellVariable<NDIM
                 // Loop over all the level sets and add up their contributions
                 // TODO: Pointwise check that level sets don't overlap
                 double brinkman_forcing = 0.0;
-                for (const auto& bc_tup : brinkman_zones)
+                for (const auto& bc_prop : brinkman_zones)
                 {
                     // Get the BC specifications for each zone
-                    Pointer<CellVariable<NDIM, double> > ls_solid_var = std::get<0>(bc_tup);
-                    AdvDiffBrinkmanPenalizationBcType bc_type = std::get<1>(bc_tup);
-                    double bc_val = std::get<2>(bc_tup);
+                    Pointer<CellVariable<NDIM, double> > ls_solid_var = bc_prop.ls_solid_var;
+                    AdvDiffBrinkmanPenalizationBcType bc_type = bc_prop.bc_type;
+                    double bc_val = bc_prop.bc_val;
+                    double eta = bc_prop.eta;
                     bool requires_callbacks = (bc_type == NEUMANN && bc_val != 0.0);
+                    double num_interface_cells = bc_prop.num_interface_cells;
+                    const double alpha = num_interface_cells * std::pow(vol_cell, 1.0 / static_cast<double>(NDIM));
                     if (requires_callbacks) continue;
 #if !defined(NDEBUG)
                     TBOX_ASSERT(bc_type == DIRICHLET || bc_type == NEUMANN);
@@ -507,7 +556,7 @@ BrinkmanPenalizationAdvDiff::computeForcing(int F_idx, Pointer<CellVariable<NDIM
                     // Homogeneous Neumann BCs have no contribution to the forcing term
                     if (bc_type == DIRICHLET)
                     {
-                        brinkman_forcing += (chi / d_eta * bc_val);
+                        brinkman_forcing += (chi / eta * bc_val);
                     }
                 }
                 // Set the Brinkman body force
@@ -516,17 +565,17 @@ BrinkmanPenalizationAdvDiff::computeForcing(int F_idx, Pointer<CellVariable<NDIM
         }
     }
     // Next, deal with inhomogeneous Neumann BCs, which need to be computed 'hierarchy-wise'.
-    for (const auto& bc_tup : brinkman_zones)
+    for (const auto& bc_prop : brinkman_zones)
     {
-        Pointer<CellVariable<NDIM, double> > ls_solid_var = std::get<0>(bc_tup);
-        AdvDiffBrinkmanPenalizationBcType bc_type = std::get<1>(bc_tup);
-        double bc_val = std::get<2>(bc_tup);
+        Pointer<CellVariable<NDIM, double> > ls_solid_var = bc_prop.ls_solid_var;
+        AdvDiffBrinkmanPenalizationBcType bc_type = bc_prop.bc_type;
+        double bc_val = bc_prop.bc_val;
         bool requires_callbacks = (bc_type == NEUMANN && bc_val != 0.0);
         if (!requires_callbacks) continue;
 
         // Fill in patch data from user-prescribed callback
-        BrinkmanInhomogeneousNeumannBCsFcnPtr bp_fcn = std::get<3>(bc_tup);
-        void* bp_ctx = std::get<4>(bc_tup);
+        BrinkmanInhomogeneousNeumannBCsFcnPtr bp_fcn = bc_prop.callback;
+        void* bp_ctx = bc_prop.ctx;
 #if !defined(NDEBUG)
         TBOX_ASSERT(bc_type == NEUMANN);
         TBOX_ASSERT(bp_fcn);
@@ -565,7 +614,10 @@ BrinkmanPenalizationAdvDiff::computeForcing(int F_idx, Pointer<CellVariable<NDIM
                 const Pointer<CartesianPatchGeometry<NDIM> > patch_geom = patch->getPatchGeometry();
                 const Box<NDIM>& patch_box = patch->getBox();
                 const double* patch_dx = patch_geom->getDx();
-                const double alpha = 2.0 * patch_dx[0]; // TODO: More general expression for width?
+                double vol_cell = 1.0;
+                for (int d = 0; d < NDIM; ++d) vol_cell *= patch_dx[d];
+                double num_interface_cells = bc_prop.num_interface_cells;
+                const double alpha = num_interface_cells * std::pow(vol_cell, 1.0 / static_cast<double>(NDIM));
 
                 Pointer<CellData<NDIM, double> > ls_solid_data = patch->getPatchData(phi_scratch_idx);
                 Pointer<SideData<NDIM, double> > B_data = patch->getPatchData(d_B_scratch_idx);
@@ -664,7 +716,8 @@ BrinkmanPenalizationAdvDiff::maskForcingTerm(int N_idx, Pointer<CellVariable<NDI
             const Pointer<CartesianPatchGeometry<NDIM> > patch_geom = patch->getPatchGeometry();
             const Box<NDIM>& patch_box = patch->getBox();
             const double* patch_dx = patch_geom->getDx();
-            const double alpha = 2.0 * patch_dx[0]; // TODO: More general expression for width?
+            double vol_cell = 1.0;
+            for (int d = 0; d < NDIM; ++d) vol_cell *= patch_dx[d];
 
             Pointer<CellData<NDIM, double> > N_data = patch->getPatchData(N_idx);
             for (Box<NDIM>::Iterator it(patch_box); it; it++)
@@ -674,11 +727,13 @@ BrinkmanPenalizationAdvDiff::maskForcingTerm(int N_idx, Pointer<CellVariable<NDI
                 // Loop over all the level sets and add up their contributions to the masking term
                 // TODO: Pointwise check that level sets don't overlap
                 double brinkman_mask = 1.0;
-                for (const auto& bc_tup : brinkman_zones)
+                for (const auto& bc_prop : brinkman_zones)
                 {
                     // Get the BC specifications for each zone
-                    Pointer<CellVariable<NDIM, double> > ls_solid_var = std::get<0>(bc_tup);
-                    AdvDiffBrinkmanPenalizationBcType bc_type = std::get<1>(bc_tup);
+                    Pointer<CellVariable<NDIM, double> > ls_solid_var = bc_prop.ls_solid_var;
+                    AdvDiffBrinkmanPenalizationBcType bc_type = bc_prop.bc_type;
+                    double num_interface_cells = bc_prop.num_interface_cells;
+                    const double alpha = num_interface_cells * std::pow(vol_cell, 1.0 / static_cast<double>(NDIM));
 #if !defined(NDEBUG)
                     TBOX_ASSERT(bc_type == DIRICHLET || bc_type == NEUMANN);
 #endif
